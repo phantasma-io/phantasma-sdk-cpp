@@ -957,8 +957,8 @@ struct Oracle {
 };
 
 struct Signature {
-	String Kind; //
-	String Data; //
+	String kind; //
+	String data; //
 };
 
 struct Transaction {
@@ -1032,8 +1032,8 @@ struct ABIMethod {
 };
 
 struct TokenProperty {
-	String Key; //
-	String Value; //
+	String key; //
+	String value; //
 };
 
 struct TokenSeries {
@@ -1089,7 +1089,7 @@ struct Token {
 };
 
 struct TokenData {
-	String ID; //
+	String id; //
 	String series; //
 	String carbonTokenId; //
 	String carbonSeriesId; //
@@ -1887,12 +1887,22 @@ PHANTASMA_FUNCTION Event PhantasmaJsonAPI::DeserializeEvent(const JSONValue& val
 	{
 		name = json::LookupString(value, PHANTASMA_LITERAL("name"), jsonErr);
 	}
+	String kind;
+	if( json::HasField(value, PHANTASMA_LITERAL("kind"), jsonErr) )
+	{
+		kind = json::LookupString(value, PHANTASMA_LITERAL("kind"), jsonErr);
+	}
+	String data;
+	if( json::HasField(value, PHANTASMA_LITERAL("data"), jsonErr) )
+	{
+		data = json::LookupString(value, PHANTASMA_LITERAL("data"), jsonErr);
+	}
 	return Event{
 		json::LookupString(value, PHANTASMA_LITERAL("address"), jsonErr),
 		json::LookupString(value, PHANTASMA_LITERAL("contract"), jsonErr),
-		json::LookupString(value, PHANTASMA_LITERAL("kind"), jsonErr),
+		kind,
 		name,
-		json::LookupString(value, PHANTASMA_LITERAL("data"), jsonErr)
+		data
 	};
 }
 
@@ -2074,7 +2084,10 @@ PHANTASMA_FUNCTION EventExtended PhantasmaJsonAPI::DeserializeEventExtended(cons
 	EventExtended output{};
 	output.address = json::LookupString(value, PHANTASMA_LITERAL("address"), jsonErr);
 	output.contract = json::LookupString(value, PHANTASMA_LITERAL("contract"), jsonErr);
-	output.kind = json::LookupString(value, PHANTASMA_LITERAL("kind"), jsonErr);
+	if( json::HasField(value, PHANTASMA_LITERAL("kind"), jsonErr) )
+	{
+		output.kind = json::LookupString(value, PHANTASMA_LITERAL("kind"), jsonErr);
+	}
 	output.type = ExtendedEventType::Unknown;
 	if( json::HasField(value, PHANTASMA_LITERAL("data"), jsonErr) )
 	{
@@ -2118,9 +2131,19 @@ PHANTASMA_FUNCTION Oracle PhantasmaJsonAPI::DeserializeOracle(const JSONValue& v
 
 PHANTASMA_FUNCTION Signature PhantasmaJsonAPI::DeserializeSignature(const JSONValue& value, bool& jsonErr)
 {
+	String kind;
+	if( json::HasField(value, PHANTASMA_LITERAL("kind"), jsonErr) )
+	{
+		kind = json::LookupString(value, PHANTASMA_LITERAL("kind"), jsonErr);
+	}
+	String data;
+	if( json::HasField(value, PHANTASMA_LITERAL("data"), jsonErr) )
+	{
+		data = json::LookupString(value, PHANTASMA_LITERAL("data"), jsonErr);
+	}
 	return Signature{
-		json::LookupString(value, PHANTASMA_LITERAL("kind"), jsonErr),
-		json::LookupString(value, PHANTASMA_LITERAL("data"), jsonErr)
+		kind,
+		data
 	};
 }
 
@@ -2349,13 +2372,18 @@ PHANTASMA_FUNCTION Token PhantasmaJsonAPI::DeserializeToken(const JSONValue& val
 	{
 		tokenSchemas = DeserializeTokenSchemas(json::LookupValue(value, PHANTASMA_LITERAL("tokenSchemas"), jsonErr), jsonErr);
 	}
+	String carbonId;
+	if( json::HasField(value, PHANTASMA_LITERAL("carbonId"), jsonErr) )
+	{
+		carbonId = json::LookupString(value, PHANTASMA_LITERAL("carbonId"), jsonErr);
+	}
 	return Token{
 		json::LookupString(value, PHANTASMA_LITERAL("symbol"), jsonErr),
 		json::LookupString(value, PHANTASMA_LITERAL("name"), jsonErr),
 		json::LookupInt32(value, PHANTASMA_LITERAL("decimals"), jsonErr),
 		json::LookupString(value, PHANTASMA_LITERAL("currentSupply"), jsonErr),
 		json::LookupString(value, PHANTASMA_LITERAL("maxSupply"), jsonErr),
-		json::LookupString(value, PHANTASMA_LITERAL("carbonId"), jsonErr),
+		carbonId,
 		json::LookupString(value, PHANTASMA_LITERAL("burnedSupply"), jsonErr),
 		json::LookupString(value, PHANTASMA_LITERAL("address"), jsonErr),
 		json::LookupString(value, PHANTASMA_LITERAL("owner"), jsonErr),
@@ -2479,9 +2507,19 @@ PHANTASMA_FUNCTION TokenSchemas PhantasmaJsonAPI::DeserializeTokenSchemas(const 
 
 PHANTASMA_FUNCTION TokenProperty PhantasmaJsonAPI::DeserializeTokenProperty(const JSONValue& value, bool& jsonErr)
 {
+	String key;
+	if( json::HasField(value, PHANTASMA_LITERAL("key"), jsonErr) )
+	{
+		key = json::LookupString(value, PHANTASMA_LITERAL("key"), jsonErr);
+	}
+	String tokenValue;
+	if( json::HasField(value, PHANTASMA_LITERAL("value"), jsonErr) )
+	{
+		tokenValue = json::LookupString(value, PHANTASMA_LITERAL("value"), jsonErr);
+	}
 	return TokenProperty{
-		json::LookupString(value, PHANTASMA_LITERAL("key"), jsonErr),
-		json::LookupString(value, PHANTASMA_LITERAL("value"), jsonErr)
+		key,
+		tokenValue
 	};
 }
 
@@ -2524,8 +2562,13 @@ PHANTASMA_FUNCTION TokenData PhantasmaJsonAPI::DeserializeTokenData(const JSONVa
 	{
 		carbonNftAddress = json::LookupString(value, PHANTASMA_LITERAL("carbonNftAddress"), jsonErr);
 	}
+	String id;
+	if( json::HasField(value, PHANTASMA_LITERAL("id"), jsonErr) )
+	{
+		id = json::LookupString(value, PHANTASMA_LITERAL("id"), jsonErr);
+	}
 	return TokenData{
-		json::LookupString(value, PHANTASMA_LITERAL("id"), jsonErr),
+		id,
 		json::LookupString(value, PHANTASMA_LITERAL("series"), jsonErr),
 		carbonTokenId,
 		carbonSeriesId,

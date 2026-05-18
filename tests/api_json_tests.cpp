@@ -89,9 +89,9 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		const JSONDocument doc = R"({"result":{"id":"1001","series":"55","carbonTokenId":"4","carbonSeriesId":"7","carbonNftAddress":"ABCDEF","mint":"42","chainName":"main","ownerAddress":"P-owner","creatorAddress":"P-creator","ram":"","rom":"CAFE","status":"Active","infusion":[],"properties":[{"key":"Name","value":"Crown #42"}]}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTokenDataResponse(json::Parse(doc), token, &err);
 		Report(ctx,
-		    ok && err.code == 0 && token.ID == "1001" && token.series == "55" && token.carbonTokenId == "4" &&
+		    ok && err.code == 0 && token.id == "1001" && token.series == "55" && token.carbonTokenId == "4" &&
 		        token.carbonSeriesId == "7" && token.carbonNftAddress == "ABCDEF" && token.properties.size() == 1 &&
-		        token.properties[0].Key == "Name",
+		        token.properties[0].key == "Name",
 		    "API GetTokenData parser preserves Carbon NFT identity");
 	}
 	{
@@ -105,19 +105,80 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		        series.carbonSeriesId == "7" && series.ownerAddress == "P-owner" && series.maxMint == "100" &&
 		        series.mintCount == "42" && series.currentSupply == "41" && series.maxSupply == "100" &&
 		        series.mode == rpc::TokenSeriesMode::Unique && series.metadata.size() == 1 &&
-		        series.metadata[0].Value == "Series 55",
+		        series.metadata[0].value == "Series 55",
 		    "API GetTokenSeriesById parser accepts current Carbon series shape");
 	}
 	{
 		// Verify Carbon transaction metadata is not dropped from Transaction responses.
 		rpc::PhantasmaError err{};
 		rpc::Transaction tx{};
-		const JSONDocument doc = R"({"result":{"hash":"HASH","chainAddress":"CHAIN","timestamp":123,"blockHeight":456,"blockHash":"BLOCK","script":"","payload":"CAFE","carbonTxType":1,"carbonTxData":"BEEF","events":[],"result":"","fee":"0","signatures":[],"expiration":789,"state":"Halt","sender":"P-sender","gasPayer":"P-gas","gasTarget":"P-target","gasPrice":"1","gasLimit":"1000"}})";
+		const JSONDocument doc = R"({"result":{"hash":"HASH","chainAddress":"CHAIN","timestamp":123,"blockHeight":456,"blockHash":"BLOCK","script":"","payload":"CAFE","carbonTxType":1,"carbonTxData":"BEEF","debugComment":"mint","events":[{"address":"P-event","contract":"gas","kind":"GasEscrow","name":"GasEscrow","data":"00"}],"extendedEvents":[{"address":"P-event","contract":"token","kind":"TokenCreate","data":{"symbol":"CROWN","maxSupply":"1","decimals":0,"isNonFungible":true,"carbonTokenId":4,"metadata":{"name":"Crown"}}}],"result":"","fee":"0","signatures":[{"kind":"Ed25519","data":"AA"}],"expiration":789,"state":"Halt","sender":"P-sender","gasPayer":"P-gas","gasTarget":"P-target","gasPrice":"1","gasLimit":"1000"}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTransactionResponse(json::Parse(doc), tx, &err);
 		Report(ctx,
 		    ok && err.code == 0 && tx.hash == "HASH" && tx.payload == "CAFE" && tx.carbonTxType == 1 &&
-		        tx.carbonTxData == "BEEF" && tx.gasPayer == "P-gas" && tx.expiration == 789,
+		        tx.carbonTxData == "BEEF" && tx.debugComment == "mint" && tx.gasPayer == "P-gas" &&
+		        tx.sender == "P-sender" && tx.gasTarget == "P-target" && tx.gasPrice == "1" &&
+		        tx.gasLimit == "1000" && tx.expiration == 789 && tx.events.size() == 1 &&
+		        tx.events[0].name == "GasEscrow" && tx.signatures.size() == 1 &&
+		        tx.signatures[0].kind == "Ed25519" && tx.signatures[0].data == "AA" &&
+		        tx.extendedEvents.size() == 1 && tx.extendedEvents[0].type == rpc::ExtendedEventType::TokenCreate &&
+		        tx.extendedEvents[0].tokenCreate.carbonTokenId == 4,
 		    "API GetTransaction parser preserves Carbon transaction metadata");
+	}
+	{
+		// Extra stale wire field names must be ignored, not treated as aliases.
+		rpc::PhantasmaError err{};
+		rpc::TokenData token{};
+		const JSONDocument doc = R"({"result":{"id":"1001","ID":"stale","series":"55","carbonTokenId":"4","carbonSeriesId":"7","carbonNftAddress":"ABCDEF","mint":"42","chainName":"main","ownerAddress":"P-owner","creatorAddress":"P-creator","ram":"","rom":"CAFE","status":"Active","infusion":[],"properties":[{"key":"Name","value":"Crown #42","Key":"stale","Value":"stale"}]}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTokenDataResponse(json::Parse(doc), token, &err);
+		Report(ctx,
+		    ok && err.code == 0 && token.id == "1001" && token.properties.size() == 1 &&
+		        token.properties[0].key == "Name" && token.properties[0].value == "Crown #42",
+		    "API GetTokenData parser ignores stale NFT/property field casing without alias mapping");
+	}
+	{
+		rpc::PhantasmaError err{};
+		rpc::Transaction tx{};
+		const JSONDocument doc = R"({"result":{"hash":"HASH","chainAddress":"CHAIN","timestamp":123,"blockHeight":456,"blockHash":"BLOCK","script":"","payload":"CAFE","events":[{"address":"P-event","contract":"gas","kind":"GasEscrow","name":"GasEscrow","data":"00","Kind":"stale","Data":"stale"}],"extendedEvents":[{"address":"P-event","contract":"token","kind":"TokenCreate","data":{"symbol":"CROWN","maxSupply":"1","decimals":0,"isNonFungible":true,"carbonTokenId":4},"Kind":"stale","Data":{"symbol":"stale"}}],"result":"","fee":"0","signatures":[{"kind":"Ed25519","data":"AA","Kind":"stale","Data":"stale"}],"expiration":789,"state":"Halt","sender":"P-sender","gasPayer":"P-gas","gasTarget":"P-target","gasPrice":"1","gasLimit":"1000"}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTransactionResponse(json::Parse(doc), tx, &err);
+		Report(ctx,
+		    ok && err.code == 0 && tx.events.size() == 1 && tx.events[0].kind == "GasEscrow" &&
+		        tx.events[0].data == "00" && tx.signatures.size() == 1 && tx.signatures[0].kind == "Ed25519" &&
+		        tx.signatures[0].data == "AA" && tx.extendedEvents.size() == 1 &&
+		        tx.extendedEvents[0].type == rpc::ExtendedEventType::TokenCreate,
+		    "API GetTransaction parser ignores stale event/signature field casing without alias mapping");
+	}
+	{
+		// Stale-only keys are ignored as old wire clutter; they must not populate current fields or fail the parse.
+		rpc::PhantasmaError err{};
+		rpc::TokenData token{};
+		const JSONDocument doc = R"({"result":{"ID":"stale","series":"55","carbonTokenId":"4","carbonSeriesId":"7","carbonNftAddress":"ABCDEF","mint":"42","chainName":"main","ownerAddress":"P-owner","creatorAddress":"P-creator","ram":"","rom":"CAFE","status":"Active","infusion":[],"properties":[{"Key":"stale","Value":"stale"}]}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTokenDataResponse(json::Parse(doc), token, &err);
+		Report(ctx,
+		    ok && err.code == 0 && token.id.empty() && token.series == "55" && token.properties.size() == 1 &&
+		        token.properties[0].key.empty() && token.properties[0].value.empty(),
+		    "API GetTokenData parser ignores stale-only NFT/property field names without alias mapping");
+	}
+	{
+		rpc::PhantasmaError err{};
+		rpc::Transaction tx{};
+		const JSONDocument doc = R"({"result":{"hash":"HASH","chainAddress":"CHAIN","timestamp":123,"blockHeight":456,"blockHash":"BLOCK","script":"","payload":"CAFE","events":[{"address":"P-event","contract":"gas","Kind":"stale","name":"GasEscrow","Data":"stale"}],"extendedEvents":[{"address":"P-event","contract":"token","Kind":"TokenCreate","Data":{"symbol":"stale"}}],"result":"","fee":"0","signatures":[{"Kind":"stale","Data":"stale"}],"expiration":789,"state":"Halt","sender":"P-sender","gasPayer":"P-gas","gasTarget":"P-target","gasPrice":"1","gasLimit":"1000"}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTransactionResponse(json::Parse(doc), tx, &err);
+		Report(ctx,
+		    ok && err.code == 0 && tx.events.size() == 1 && tx.events[0].kind.empty() &&
+		        tx.events[0].data.empty() && tx.signatures.size() == 1 && tx.signatures[0].kind.empty() &&
+		        tx.signatures[0].data.empty() && tx.extendedEvents.size() == 1 &&
+		        tx.extendedEvents[0].type == rpc::ExtendedEventType::Unknown,
+		    "API GetTransaction parser ignores stale-only event/signature field names without alias mapping");
+	}
+	{
+		rpc::PhantasmaError err{};
+		rpc::Token token{};
+		const JSONDocument doc = R"({"result":{"symbol":"CROWN","name":"Crown","decimals":0,"currentSupply":"1","maxSupply":"0","carbonID":"stale","burnedSupply":"0","address":"S-token","owner":"P-owner","flags":"Transferable","script":"","series":[],"metadata":[]}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTokenResponse(json::Parse(doc), token, &err);
+		Report(ctx,
+		    ok && err.code == 0 && token.symbol == "CROWN" && token.carbonId.empty(),
+		    "API GetToken parser ignores stale-only carbonID without alias mapping");
 	}
 }
 

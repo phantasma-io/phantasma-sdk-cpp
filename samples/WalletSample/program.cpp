@@ -295,7 +295,7 @@ class Program
 							WriteLine("Metadata:");
 							for( const auto& prop : tokenInfo->metadata )
 							{
-								WriteLine("\t", prop.Key.c_str(), ": ", prop.Value.c_str());
+								WriteLine("\t", prop.key.c_str(), ": ", prop.value.c_str());
 							}
 						}
 						if( !tokenInfo->series.empty() )
@@ -312,7 +312,7 @@ class Program
 								{
 									for( const auto& prop : series.metadata )
 									{
-										WriteLine("\t\t", prop.Key.c_str(), ": ", prop.Value.c_str());
+										WriteLine("\t\t", prop.key.c_str(), ": ", prop.value.c_str());
 									}
 								}
 							}
@@ -323,7 +323,7 @@ class Program
 				for( const auto& id : balanceSheet.ids )
 				{
 					const auto& tokenData = _phantasmaApiService.GetTokenData(balanceSheet.symbol.c_str(), id.c_str());
-					WriteLine("\tID: ", tokenData.ID.c_str(), " - RAM: ", tokenData.ram.c_str(), " ROM: ", tokenData.rom.c_str());
+					WriteLine("\tID: ", tokenData.id.c_str(), " - RAM: ", tokenData.ram.c_str(), " ROM: ", tokenData.rom.c_str());
 				}
 				WriteLine();
 			}
