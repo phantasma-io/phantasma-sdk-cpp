@@ -6,11 +6,64 @@ using namespace testutil;
 
 void RunApiJsonNumericFlexTests(TestContext& ctx)
 {
+	rpc::PhantasmaJsonAPI::UseRequestId("1");
 	{
 		bool err = false;
-		const JSONDocument doc = R"({"result":"321"})";
+		const JSONDocument doc = R"({"id":"1","result":"321"})";
 		const Int32 value = json::LookupInt32(json::Parse(doc), PHANTASMA_LITERAL("result"), err);
 		Report(ctx, !err && value == 321, "API JSON LookupInt32 accepts quoted numeric");
+	}
+	{
+		// The response parser must reject envelopes that cannot be matched to the generated request id.
+		const JSONDocument numericId = R"({"id":1,"result":"321"})";
+		rpc::PhantasmaError numericErr{};
+		Int32 numericHeight = 0;
+		const bool numericOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(numericId), numericHeight, &numericErr);
+		Report(ctx, numericOk && numericErr.code == 0 && numericHeight == 321, "API response parser accepts matching numeric JSON-RPC id");
+
+		const JSONDocument missingId = R"({"result":"321"})";
+		rpc::PhantasmaError missingErr{};
+		Int32 missingHeight = 0;
+		const bool missingOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(missingId), missingHeight, &missingErr);
+		Report(ctx, !missingOk && missingErr.code == rpc::PhantasmaError::InvalidRpcResponse, "API response parser rejects missing JSON-RPC id");
+
+		const JSONDocument nullId = R"({"id":null,"result":"321"})";
+		rpc::PhantasmaError nullErr{};
+		Int32 nullHeight = 0;
+		const bool nullOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(nullId), nullHeight, &nullErr);
+		Report(ctx, !nullOk && nullErr.code == rpc::PhantasmaError::InvalidRpcResponse, "API response parser rejects null JSON-RPC id");
+
+		const JSONDocument mismatchedId = R"({"id":"2","result":"321"})";
+		rpc::PhantasmaError mismatchErr{};
+		Int32 mismatchHeight = 0;
+		const bool mismatchOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(mismatchedId), mismatchHeight, &mismatchErr);
+		Report(ctx, !mismatchOk && mismatchErr.code == rpc::PhantasmaError::InvalidRpcResponse, "API response parser rejects mismatched JSON-RPC id");
+
+		const JSONDocument staleStringId = R"({"id":"0","result":"321"})";
+		rpc::PhantasmaError staleStringErr{};
+		Int32 staleStringHeight = 0;
+		const bool staleStringOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(staleStringId), staleStringHeight, &staleStringErr);
+		Report(ctx, !staleStringOk && staleStringErr.code == rpc::PhantasmaError::InvalidRpcResponse, "API response parser rejects stale string JSON-RPC id");
+
+		const JSONDocument staleNumericId = R"({"id":0,"result":"321"})";
+		rpc::PhantasmaError staleNumericErr{};
+		Int32 staleNumericHeight = 0;
+		const bool staleNumericOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(staleNumericId), staleNumericHeight, &staleNumericErr);
+		Report(ctx, !staleNumericOk && staleNumericErr.code == rpc::PhantasmaError::InvalidRpcResponse, "API response parser rejects stale numeric JSON-RPC id");
+
+		const JSONDocument wrongTypedId = R"({"id":{"bad":"id"},"result":"321"})";
+		rpc::PhantasmaError wrongTypedErr{};
+		Int32 wrongTypedHeight = 0;
+		const bool wrongTypedOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(wrongTypedId), wrongTypedHeight, &wrongTypedErr);
+		Report(ctx, !wrongTypedOk && wrongTypedErr.code == rpc::PhantasmaError::InvalidRpcResponse, "API response parser rejects non-scalar JSON-RPC id");
+
+		const JSONDocument mismatchedErrorId = R"({"id":"0","error":{"code":-32603,"message":"Execution failed"}})";
+		rpc::PhantasmaError mismatchedErrorErr{};
+		Int32 mismatchedErrorHeight = 0;
+		const bool mismatchedErrorOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(mismatchedErrorId), mismatchedErrorHeight, &mismatchedErrorErr);
+		Report(ctx,
+		    !mismatchedErrorOk && mismatchedErrorErr.code == rpc::PhantasmaError::InvalidRpcResponse,
+		    "API response parser rejects JSON-RPC id mismatch before RPC error body");
 	}
 	{
 		bool err = false;
@@ -25,9 +78,45 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 	{
 		rpc::PhantasmaError err{};
 		Int32 height = 0;
-		const JSONDocument doc = R"({"result":"12345"})";
+		const JSONDocument doc = R"({"id":"1","result":"12345"})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(doc), height, &err);
 		Report(ctx, ok && err.code == 0 && height == 12345, "API GetBlockHeight parser accepts quoted numeric");
+	}
+	{
+		// Generated request builders must not reuse one fixed id, and parser
+		// validation must use the id carried by the request being parsed.
+		JSONBuilder firstRequest;
+		rpc::PhantasmaJsonAPI::MakeGetVersionRequest(firstRequest);
+		JSONBuilder secondRequest;
+		rpc::PhantasmaJsonAPI::MakeGetBlockHeightRequest(secondRequest, "main");
+
+		const std::string firstJson = firstRequest.s.str();
+		const std::string secondJson = secondRequest.s.str();
+		const std::string firstRequestId = rpc::PhantasmaJsonAPI::RequestId(firstRequest);
+		const std::string secondRequestId = rpc::PhantasmaJsonAPI::RequestId(secondRequest);
+		Report(ctx,
+		    !firstRequestId.empty() && !secondRequestId.empty() && firstRequestId != secondRequestId &&
+		        firstJson.find("\"id\": \"" + firstRequestId + "\"") != std::string::npos &&
+		        secondJson.find("\"id\": \"" + secondRequestId + "\"") != std::string::npos,
+		    "API request builders generate distinct JSON-RPC ids");
+
+		rpc::PhantasmaJsonAPI::UseRequestId(secondRequest);
+		const JSONDocument staleDoc = String(PHANTASMA_LITERAL("{\"id\":\"")) + firstRequestId + String(PHANTASMA_LITERAL("\",\"result\":\"321\"}"));
+		rpc::PhantasmaError staleErr{};
+		Int32 staleHeight = 0;
+		const bool staleOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(staleDoc), staleHeight, &staleErr);
+		Report(ctx,
+		    !staleOk && staleErr.code == rpc::PhantasmaError::InvalidRpcResponse,
+		    "API response parser rejects stale generated JSON-RPC id");
+
+		const JSONDocument matchingDoc = String(PHANTASMA_LITERAL("{\"id\":\"")) + secondRequestId + String(PHANTASMA_LITERAL("\",\"result\":\"321\"}"));
+		rpc::PhantasmaError matchingErr{};
+		Int32 matchingHeight = 0;
+		const bool matchingOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(matchingDoc), matchingHeight, &matchingErr);
+		Report(ctx,
+		    matchingOk && matchingErr.code == 0 && matchingHeight == 321,
+		    "API response parser accepts the matching generated JSON-RPC id");
+		rpc::PhantasmaJsonAPI::UseRequestId("1");
 	}
 	{
 		// Verify the current RPC shape includes the chain before the block hash.
@@ -63,7 +152,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		// Verify build metadata parsing for the getVersion RPC helper.
 		rpc::PhantasmaError err{};
 		rpc::BuildInfoResult build{};
-		const JSONDocument doc = R"({"result":{"version":"1.2.3","commit":"abcdef","buildTimeUtc":"2026-04-28T00:00:00Z"}})";
+		const JSONDocument doc = R"({"id":"1","result":{"version":"1.2.3","commit":"abcdef","buildTimeUtc":"2026-04-28T00:00:00Z"}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetVersionResponse(json::Parse(doc), build, &err);
 		Report(ctx,
 		    ok && err.code == 0 && build.version == "1.2.3" && build.commit == "abcdef" && build.buildTimeUtc == "2026-04-28T00:00:00Z",
@@ -73,7 +162,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		// Verify VM gas/config parsing for the getPhantasmaVmConfig RPC helper.
 		rpc::PhantasmaError err{};
 		rpc::PhantasmaVmConfig config{};
-		const JSONDocument doc = R"({"result":{"isStored":true,"featureLevel":2,"gasConstructor":"1","gasNexus":"2","gasOrganization":"3","gasAccount":"4","gasLeaderboard":"5","gasStandard":"6","gasOracle":"7","fuelPerContractDeploy":"8"}})";
+		const JSONDocument doc = R"({"id":"1","result":{"isStored":true,"featureLevel":2,"gasConstructor":"1","gasNexus":"2","gasOrganization":"3","gasAccount":"4","gasLeaderboard":"5","gasStandard":"6","gasOracle":"7","fuelPerContractDeploy":"8"}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetPhantasmaVmConfigResponse(json::Parse(doc), config, &err);
 		Report(ctx,
 		    ok && err.code == 0 && config.isStored && config.featureLevel == 2 && config.gasConstructor == "1" &&
@@ -86,7 +175,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		// Verify current Carbon NFT identity fields are preserved from TokenData responses.
 		rpc::PhantasmaError err{};
 		rpc::TokenData token{};
-		const JSONDocument doc = R"({"result":{"id":"1001","series":"55","carbonTokenId":"4","carbonSeriesId":"7","carbonNftAddress":"ABCDEF","mint":"42","chainName":"main","ownerAddress":"P-owner","creatorAddress":"P-creator","ram":"","rom":"CAFE","status":"Active","infusion":[],"properties":[{"key":"Name","value":"Crown #42"}]}})";
+		const JSONDocument doc = R"({"id":"1","result":{"id":"1001","series":"55","carbonTokenId":"4","carbonSeriesId":"7","carbonNftAddress":"ABCDEF","mint":"42","chainName":"main","ownerAddress":"P-owner","creatorAddress":"P-creator","ram":"","rom":"CAFE","status":"Active","infusion":[],"properties":[{"key":"Name","value":"Crown #42"}]}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTokenDataResponse(json::Parse(doc), token, &err);
 		Report(ctx,
 		    ok && err.code == 0 && token.id == "1001" && token.series == "55" && token.carbonTokenId == "4" &&
@@ -98,7 +187,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		// Verify the current TokenSeries response shape parses without legacy-only fields.
 		rpc::PhantasmaError err{};
 		rpc::TokenSeries series{};
-		const JSONDocument doc = R"({"result":{"seriesId":"55","carbonTokenId":"4","carbonSeriesId":"7","ownerAddress":"P-owner","maxMint":"100","mintCount":"42","currentSupply":"41","maxSupply":"100","metadata":[{"key":"Name","value":"Series 55"}]}})";
+		const JSONDocument doc = R"({"id":"1","result":{"seriesId":"55","carbonTokenId":"4","carbonSeriesId":"7","ownerAddress":"P-owner","maxMint":"100","mintCount":"42","currentSupply":"41","maxSupply":"100","metadata":[{"key":"Name","value":"Series 55"}]}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTokenSeriesByIdResponse(json::Parse(doc), series, &err);
 		Report(ctx,
 		    ok && err.code == 0 && series.seriesId == "55" && series.carbonTokenId == "4" &&
@@ -112,7 +201,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		// Verify Carbon transaction metadata is not dropped from Transaction responses.
 		rpc::PhantasmaError err{};
 		rpc::Transaction tx{};
-		const JSONDocument doc = R"({"result":{"hash":"HASH","chainAddress":"CHAIN","timestamp":123,"blockHeight":456,"blockHash":"BLOCK","script":"","payload":"CAFE","carbonTxType":1,"carbonTxData":"BEEF","debugComment":"mint","events":[{"address":"P-event","contract":"gas","kind":"GasEscrow","name":"GasEscrow","data":"00"}],"extendedEvents":[{"address":"P-event","contract":"token","kind":"TokenCreate","data":{"symbol":"CROWN","maxSupply":"1","decimals":0,"isNonFungible":true,"carbonTokenId":4,"metadata":{"name":"Crown"}}}],"result":"","fee":"0","signatures":[{"kind":"Ed25519","data":"AA"}],"expiration":789,"state":"Halt","sender":"P-sender","gasPayer":"P-gas","gasTarget":"P-target","gasPrice":"1","gasLimit":"1000"}})";
+		const JSONDocument doc = R"({"id":"1","result":{"hash":"HASH","chainAddress":"CHAIN","timestamp":123,"blockHeight":456,"blockHash":"BLOCK","script":"","payload":"CAFE","carbonTxType":1,"carbonTxData":"BEEF","debugComment":"mint","events":[{"address":"P-event","contract":"gas","kind":"GasEscrow","name":"GasEscrow","data":"00"}],"extendedEvents":[{"address":"P-event","contract":"token","kind":"TokenCreate","data":{"symbol":"CROWN","maxSupply":"1","decimals":0,"isNonFungible":true,"carbonTokenId":4,"metadata":{"name":"Crown"}}}],"result":"","fee":"0","signatures":[{"kind":"Ed25519","data":"AA"}],"expiration":789,"state":"Halt","sender":"P-sender","gasPayer":"P-gas","gasTarget":"P-target","gasPrice":"1","gasLimit":"1000"}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTransactionResponse(json::Parse(doc), tx, &err);
 		Report(ctx,
 		    ok && err.code == 0 && tx.hash == "HASH" && tx.payload == "CAFE" && tx.carbonTxType == 1 &&
@@ -129,7 +218,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		// Extra stale wire field names must be ignored, not treated as aliases.
 		rpc::PhantasmaError err{};
 		rpc::TokenData token{};
-		const JSONDocument doc = R"({"result":{"id":"1001","ID":"stale","series":"55","carbonTokenId":"4","carbonSeriesId":"7","carbonNftAddress":"ABCDEF","mint":"42","chainName":"main","ownerAddress":"P-owner","creatorAddress":"P-creator","ram":"","rom":"CAFE","status":"Active","infusion":[],"properties":[{"key":"Name","value":"Crown #42","Key":"stale","Value":"stale"}]}})";
+		const JSONDocument doc = R"({"id":"1","result":{"id":"1001","ID":"stale","series":"55","carbonTokenId":"4","carbonSeriesId":"7","carbonNftAddress":"ABCDEF","mint":"42","chainName":"main","ownerAddress":"P-owner","creatorAddress":"P-creator","ram":"","rom":"CAFE","status":"Active","infusion":[],"properties":[{"key":"Name","value":"Crown #42","Key":"stale","Value":"stale"}]}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTokenDataResponse(json::Parse(doc), token, &err);
 		Report(ctx,
 		    ok && err.code == 0 && token.id == "1001" && token.properties.size() == 1 &&
@@ -139,7 +228,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 	{
 		rpc::PhantasmaError err{};
 		rpc::Transaction tx{};
-		const JSONDocument doc = R"({"result":{"hash":"HASH","chainAddress":"CHAIN","timestamp":123,"blockHeight":456,"blockHash":"BLOCK","script":"","payload":"CAFE","events":[{"address":"P-event","contract":"gas","kind":"GasEscrow","name":"GasEscrow","data":"00","Kind":"stale","Data":"stale"}],"extendedEvents":[{"address":"P-event","contract":"token","kind":"TokenCreate","data":{"symbol":"CROWN","maxSupply":"1","decimals":0,"isNonFungible":true,"carbonTokenId":4},"Kind":"stale","Data":{"symbol":"stale"}}],"result":"","fee":"0","signatures":[{"kind":"Ed25519","data":"AA","Kind":"stale","Data":"stale"}],"expiration":789,"state":"Halt","sender":"P-sender","gasPayer":"P-gas","gasTarget":"P-target","gasPrice":"1","gasLimit":"1000"}})";
+		const JSONDocument doc = R"({"id":"1","result":{"hash":"HASH","chainAddress":"CHAIN","timestamp":123,"blockHeight":456,"blockHash":"BLOCK","script":"","payload":"CAFE","events":[{"address":"P-event","contract":"gas","kind":"GasEscrow","name":"GasEscrow","data":"00","Kind":"stale","Data":"stale"}],"extendedEvents":[{"address":"P-event","contract":"token","kind":"TokenCreate","data":{"symbol":"CROWN","maxSupply":"1","decimals":0,"isNonFungible":true,"carbonTokenId":4},"Kind":"stale","Data":{"symbol":"stale"}}],"result":"","fee":"0","signatures":[{"kind":"Ed25519","data":"AA","Kind":"stale","Data":"stale"}],"expiration":789,"state":"Halt","sender":"P-sender","gasPayer":"P-gas","gasTarget":"P-target","gasPrice":"1","gasLimit":"1000"}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTransactionResponse(json::Parse(doc), tx, &err);
 		Report(ctx,
 		    ok && err.code == 0 && tx.events.size() == 1 && tx.events[0].kind == "GasEscrow" &&
@@ -152,7 +241,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		// Stale-only keys are ignored as old wire clutter; they must not populate current fields or fail the parse.
 		rpc::PhantasmaError err{};
 		rpc::TokenData token{};
-		const JSONDocument doc = R"({"result":{"ID":"stale","series":"55","carbonTokenId":"4","carbonSeriesId":"7","carbonNftAddress":"ABCDEF","mint":"42","chainName":"main","ownerAddress":"P-owner","creatorAddress":"P-creator","ram":"","rom":"CAFE","status":"Active","infusion":[],"properties":[{"Key":"stale","Value":"stale"}]}})";
+		const JSONDocument doc = R"({"id":"1","result":{"ID":"stale","series":"55","carbonTokenId":"4","carbonSeriesId":"7","carbonNftAddress":"ABCDEF","mint":"42","chainName":"main","ownerAddress":"P-owner","creatorAddress":"P-creator","ram":"","rom":"CAFE","status":"Active","infusion":[],"properties":[{"Key":"stale","Value":"stale"}]}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTokenDataResponse(json::Parse(doc), token, &err);
 		Report(ctx,
 		    ok && err.code == 0 && token.id.empty() && token.series == "55" && token.properties.size() == 1 &&
@@ -162,7 +251,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 	{
 		rpc::PhantasmaError err{};
 		rpc::Transaction tx{};
-		const JSONDocument doc = R"({"result":{"hash":"HASH","chainAddress":"CHAIN","timestamp":123,"blockHeight":456,"blockHash":"BLOCK","script":"","payload":"CAFE","events":[{"address":"P-event","contract":"gas","Kind":"stale","name":"GasEscrow","Data":"stale"}],"extendedEvents":[{"address":"P-event","contract":"token","Kind":"TokenCreate","Data":{"symbol":"stale"}}],"result":"","fee":"0","signatures":[{"Kind":"stale","Data":"stale"}],"expiration":789,"state":"Halt","sender":"P-sender","gasPayer":"P-gas","gasTarget":"P-target","gasPrice":"1","gasLimit":"1000"}})";
+		const JSONDocument doc = R"({"id":"1","result":{"hash":"HASH","chainAddress":"CHAIN","timestamp":123,"blockHeight":456,"blockHash":"BLOCK","script":"","payload":"CAFE","events":[{"address":"P-event","contract":"gas","Kind":"stale","name":"GasEscrow","Data":"stale"}],"extendedEvents":[{"address":"P-event","contract":"token","Kind":"TokenCreate","Data":{"symbol":"stale"}}],"result":"","fee":"0","signatures":[{"Kind":"stale","Data":"stale"}],"expiration":789,"state":"Halt","sender":"P-sender","gasPayer":"P-gas","gasTarget":"P-target","gasPrice":"1","gasLimit":"1000"}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTransactionResponse(json::Parse(doc), tx, &err);
 		Report(ctx,
 		    ok && err.code == 0 && tx.events.size() == 1 && tx.events[0].kind.empty() &&
@@ -174,7 +263,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 	{
 		rpc::PhantasmaError err{};
 		rpc::Token token{};
-		const JSONDocument doc = R"({"result":{"symbol":"CROWN","name":"Crown","decimals":0,"currentSupply":"1","maxSupply":"0","carbonID":"stale","burnedSupply":"0","address":"S-token","owner":"P-owner","flags":"Transferable","script":"","series":[],"metadata":[]}})";
+		const JSONDocument doc = R"({"id":"1","result":{"symbol":"CROWN","name":"Crown","decimals":0,"currentSupply":"1","maxSupply":"0","carbonID":"stale","burnedSupply":"0","address":"S-token","owner":"P-owner","flags":"Transferable","script":"","series":[],"metadata":[]}})";
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTokenResponse(json::Parse(doc), token, &err);
 		Report(ctx,
 		    ok && err.code == 0 && token.symbol == "CROWN" && token.carbonId.empty(),
