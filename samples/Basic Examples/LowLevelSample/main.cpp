@@ -11,11 +11,15 @@
 using namespace phantasma;
 using namespace phantasma::rpc;
 
-const char* DoHttpPost(const char* uri, const std::string& request)
+const char* DoHttpPost(const char* uri, const std::string& request, const std::string& requestId)
 {
+	(void)uri;
+	(void)request;
 	//This is where you'd perform the HTTP POST request...
 	//Hard-coded response:
-	return R"({"jsonrpc": "2.0", "result": {"address" : "NztsEZP7dtrzRBagogUYVp6mgEFbhjZfvHMVkd2bYWJfE","name" : "anonymous","balances" : [{"chain" : "main","amount" : "208000046079","symbol" : "SOUL","decimals" : 10},{"chain" : "main","amount" : "5000000000000","symbol" : "NEOSOUL","decimals" : 8},{"chain" : "main","amount" : "6","symbol" : "NACHO","decimals" : 0,"ids" : ["101","102","103","104","105","106"]}]}, "id": 1})";
+	static std::string response;
+	response = R"({"jsonrpc": "2.0", "result": {"address" : "NztsEZP7dtrzRBagogUYVp6mgEFbhjZfvHMVkd2bYWJfE","name" : "anonymous","balances" : [{"chain" : "main","amount" : "208000046079","symbol" : "SOUL","decimals" : 10},{"chain" : "main","amount" : "5000000000000","symbol" : "NEOSOUL","decimals" : 8},{"chain" : "main","amount" : "6","symbol" : "NACHO","decimals" : 0,"ids" : ["101","102","103","104","105","106"]}]}, "id": ")" + requestId + R"("})";
+	return response.c_str();
 }
 
 int main()
@@ -28,9 +32,11 @@ int main()
 	JSONBuilder json;
 	PhantasmaJsonAPI::MakeGetAccountRequest(json, wif);
 
-	JSONValue response = DoHttpPost(PhantasmaJsonAPI::Uri(), json.s.str());
+	const std::string requestId = PhantasmaJsonAPI::RequestId(json);
+	JSONValue response = DoHttpPost(PhantasmaJsonAPI::Uri(), json.s.str(), requestId);
 
 	Account account;
+	PhantasmaJsonAPI::UseRequestId(json);
 	PhantasmaJsonAPI::ParseGetAccountResponse(response, account);
 
 	std::cout << "Balance description for address " << wif << std::endl;

@@ -27,6 +27,14 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		const bool missingOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(missingId), missingHeight, &missingErr);
 		Report(ctx, !missingOk && missingErr.code == rpc::PhantasmaError::InvalidRpcResponse, "API response parser rejects missing JSON-RPC id");
 
+		const JSONDocument missingResult = R"({"id":"1"})";
+		rpc::PhantasmaError missingResultErr{};
+		Int32 missingResultHeight = 0;
+		const bool missingResultOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(missingResult), missingResultHeight, &missingResultErr);
+		Report(ctx,
+		    !missingResultOk && missingResultErr.code == rpc::PhantasmaError::InvalidRpcResponse,
+		    "API response parser rejects successful JSON-RPC envelopes without result");
+
 		const JSONDocument nullId = R"({"id":null,"result":"321"})";
 		rpc::PhantasmaError nullErr{};
 		Int32 nullHeight = 0;
@@ -101,6 +109,9 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		    "API request builders generate distinct JSON-RPC ids");
 
 		rpc::PhantasmaJsonAPI::UseRequestId(secondRequest);
+		Report(ctx,
+		    rpc::PhantasmaJsonAPI::RequestId(secondRequest) == String(PHANTASMA_LITERAL("1")),
+		    "API UseRequestId releases generated JSON-RPC id storage");
 		const JSONDocument staleDoc = String(PHANTASMA_LITERAL("{\"id\":\"")) + firstRequestId + String(PHANTASMA_LITERAL("\",\"result\":\"321\"}"));
 		rpc::PhantasmaError staleErr{};
 		Int32 staleHeight = 0;

@@ -529,6 +529,10 @@
 #define PHANTASMA_FUNCTION
 #endif
 
+#ifndef PHANTASMA_MAX_TRACKED_JSON_RPC_IDS
+#define PHANTASMA_MAX_TRACKED_JSON_RPC_IDS 4096
+#endif
+
 namespace phantasma {
 #ifdef PHANTASMA_CHAR
 typedef PHANTASMA_CHAR Char;
@@ -2877,7 +2881,12 @@ PHANTASMA_FUNCTION PHANTASMA_MAP<const void*, String>& JsonRpcRequestIdsByBuilde
 PHANTASMA_FUNCTION void StoreJsonRpcRequestId(const JSONBuilder& request, const String& requestId)
 {
 	std::lock_guard<std::mutex> lock(JsonRpcRequestIdMutex());
-	JsonRpcRequestIdsByBuilder()[&request] = requestId;
+	PHANTASMA_MAP<const void*, String>& requestIdsByBuilder = JsonRpcRequestIdsByBuilder();
+#if PHANTASMA_MAX_TRACKED_JSON_RPC_IDS > 0
+	while( requestIdsByBuilder.size() >= PHANTASMA_MAX_TRACKED_JSON_RPC_IDS )
+		requestIdsByBuilder.erase(requestIdsByBuilder.begin());
+#endif
+	requestIdsByBuilder[&request] = requestId;
 }
 
 PHANTASMA_FUNCTION String LoadJsonRpcRequestId(const JSONBuilder& request)
@@ -2888,6 +2897,18 @@ PHANTASMA_FUNCTION String LoadJsonRpcRequestId(const JSONBuilder& request)
 	if( it == requestIdsByBuilder.end() )
 		return PHANTASMA_LITERAL("1");
 	return it->second;
+}
+
+PHANTASMA_FUNCTION String TakeJsonRpcRequestId(const JSONBuilder& request)
+{
+	std::lock_guard<std::mutex> lock(JsonRpcRequestIdMutex());
+	PHANTASMA_MAP<const void*, String>& requestIdsByBuilder = JsonRpcRequestIdsByBuilder();
+	const auto it = requestIdsByBuilder.find(&request);
+	if( it == requestIdsByBuilder.end() )
+		return PHANTASMA_LITERAL("1");
+	const String requestId = it->second;
+	requestIdsByBuilder.erase(it);
+	return requestId;
 }
 
 PHANTASMA_FUNCTION void AddJsonRpcRequestId(JSONBuilder& request)
@@ -2904,7 +2925,7 @@ PHANTASMA_FUNCTION String PhantasmaJsonAPI::RequestId(const JSONBuilder& request
 
 PHANTASMA_FUNCTION void PhantasmaJsonAPI::UseRequestId(const JSONBuilder& request)
 {
-	CurrentJsonRpcResponseId() = LoadJsonRpcRequestId(request);
+	CurrentJsonRpcResponseId() = TakeJsonRpcRequestId(request);
 }
 
 PHANTASMA_FUNCTION void PhantasmaJsonAPI::UseRequestId(const Char* requestId)
