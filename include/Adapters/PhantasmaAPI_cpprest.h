@@ -8,8 +8,26 @@
 //------------------------------------------------------------------------------
 
 #include <cpprest/http_client.h>
+#include <cpprest/containerstream.h>
 #include <cpprest/json.h>
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <string>
+#include <vector>
+
+#ifndef PHANTASMA_DEFAULT_MAX_RPC_RESPONSE_BYTES
+#define PHANTASMA_DEFAULT_MAX_RPC_RESPONSE_BYTES ((size_t)16 * 1024 * 1024)
+#endif
+
+#ifndef PHANTASMA_LITERAL
+#ifdef _UNICODE
+#define PHANTASMA_LITERAL(x) L##x
+#else
+#define PHANTASMA_LITERAL(x) x
+#endif
+#endif
 
 #define PHANTASMA_CPPREST_JSON
 
@@ -86,6 +104,41 @@ namespace rpc {
 struct PhantasmaError;
 void OnHttpError(PhantasmaError&, const PHANTASMA_CHAR*);
 } // namespace rpc
+
+inline const PHANTASMA_CHAR* RpcResponseTooLargeMessage() { return PHANTASMA_LITERAL("RPC response body exceeds configured maximum size"); }
+
+inline void ThrowRpcResponseTooLarge(rpc::PhantasmaError* err)
+{
+	if( err )
+		rpc::OnHttpError(*err, RpcResponseTooLargeMessage());
+	throw web::http::http_exception(RpcResponseTooLargeMessage());
+}
+
+inline utility::string_t ReadLimitedResponseBody(web::http::http_response& response, rpc::PhantasmaError* err)
+{
+	const auto contentLength = response.headers().content_length();
+	if( contentLength > PHANTASMA_DEFAULT_MAX_RPC_RESPONSE_BYTES )
+		ThrowRpcResponseTooLarge(err);
+
+	const size_t chunkSize = 64 * 1024;
+	std::vector<unsigned char> body;
+	auto stream = response.body();
+	for( ;; )
+	{
+		const size_t remainingAllowed = PHANTASMA_DEFAULT_MAX_RPC_RESPONSE_BYTES - body.size();
+		const size_t requested = std::min(chunkSize, remainingAllowed + (remainingAllowed == std::numeric_limits<size_t>::max() ? 0 : 1));
+		concurrency::streams::container_buffer<std::vector<unsigned char>> chunk(std::ios_base::out);
+		const size_t read = stream.read(chunk, requested).get();
+		if( read == 0 )
+			break;
+		if( read > remainingAllowed )
+			ThrowRpcResponseTooLarge(err);
+		const auto& data = chunk.collection();
+		body.insert(body.end(), data.begin(), data.end());
+	}
+	return utility::conversions::to_string_t(std::string(body.begin(), body.end()));
+}
+
 inline web::json::value HttpPost(web::http::client::http_client& client, const json::Char* uri, const web::json::value& data, rpc::PhantasmaError* err)
 {
 	web::uri_builder builder(uri);
@@ -103,7 +156,8 @@ inline web::json::value HttpPost(web::http::client::http_client& client, const j
 				rpc::OnHttpError(*err, str.c_str());
 			throw web::http::http_exception(str);
 		}
-		return response.content_ready().get().extract_json(true).get(); })
+		const auto body = ReadLimitedResponseBody(response, err);
+		return web::json::value::parse(body); })
 	    .get();
 }
 
