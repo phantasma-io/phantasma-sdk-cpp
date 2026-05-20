@@ -404,10 +404,26 @@ inline void WriteArray(uint32_t length, const Bytes64* items, WriteView& writer)
 		WriteExactly((const Byte*)items[i].bytes, Bytes64::length, writer);
 }
 
-inline bool ReadArray(ByteView& out, ReadView& reader, Allocator& alloc)
+inline bool ReadArrayLength(uint32_t& length, ReadView& reader, size_t elementSize = 1)
 {
 	const int32_t len = Read4(reader);
-	if( len < 0 )
+	if( len < 0 || elementSize == 0 )
+	{
+		return false;
+	}
+	const size_t count = (size_t)len;
+	if( count > reader.length / elementSize )
+	{
+		return false;
+	}
+	length = (uint32_t)len;
+	return true;
+}
+
+inline bool ReadArray(ByteView& out, ReadView& reader, Allocator& alloc)
+{
+	uint32_t len = 0;
+	if( !ReadArrayLength(len, reader) )
 	{
 		return false;
 	}
@@ -424,12 +440,10 @@ inline bool ReadArray(ByteView& out, ReadView& reader, Allocator& alloc)
 
 inline bool ReadArray(uint32_t& length, ByteView*& items, ReadView& reader, Allocator& alloc)
 {
-	const int32_t len = Read4(reader);
-	if( len < 0 )
+	if( !ReadArrayLength(length, reader, 4) )
 	{
 		return false;
 	}
-	length = (uint32_t)len;
 	if( length == 0 )
 	{
 		items = nullptr;
@@ -448,14 +462,12 @@ inline bool ReadArray(uint32_t& length, ByteView*& items, ReadView& reader, Allo
 }
 
 template<class T, class ReaderFunc>
-inline bool ReadArray(uint32_t& length, T*& items, ReadView& reader, Allocator& alloc, ReaderFunc fn)
+inline bool ReadArray(uint32_t& length, T*& items, ReadView& reader, Allocator& alloc, ReaderFunc fn, size_t elementSize = 1)
 {
-	const int32_t len = Read4(reader);
-	if( len < 0 )
+	if( !ReadArrayLength(length, reader, elementSize) )
 	{
 		return false;
 	}
-	length = (uint32_t)len;
 	if( length == 0 )
 	{
 		items = nullptr;
@@ -485,12 +497,10 @@ inline bool ReadSz(const char*& out, ReadView& reader, Allocator& alloc)
 
 inline bool ReadArraySz(uint32_t& length, const char**& items, ReadView& reader, Allocator& alloc)
 {
-	const int32_t len = Read4(reader);
-	if( len < 0 )
+	if( !ReadArrayLength(length, reader) )
 	{
 		return false;
 	}
-	length = (uint32_t)len;
 	if( length == 0 )
 	{
 		items = nullptr;
@@ -524,12 +534,12 @@ inline void Write(const VmNamedDynamicVariable& in, WriteView& writer);
 
 inline bool Read(VmStructSchema& out, ReadView& reader, Allocator& alloc)
 {
-	const int32_t len = Read4(reader);
-	if( len < 0 )
+	uint32_t len = 0;
+	if( !ReadArrayLength(len, reader) )
 	{
 		return false;
 	}
-	out.numFields = (uint32_t)len;
+	out.numFields = len;
 	out.fields = out.numFields ? alloc.Alloc<VmNamedVariableSchema>(out.numFields) : nullptr;
 	for( uint32_t i = 0; i != out.numFields; ++i )
 	{
@@ -589,12 +599,12 @@ inline void Write(const VmNamedVariableSchema& in, WriteView& writer)
 inline bool Read(VmDynamicVariable& out, ReadView& reader, Allocator& alloc);
 inline bool Read(VmDynamicStruct& out, ReadView& reader, Allocator& alloc)
 {
-	const int32_t len = Read4(reader);
-	if( len < 0 )
+	uint32_t len = 0;
+	if( !ReadArrayLength(len, reader) )
 	{
 		return false;
 	}
-	out.numFields = (uint32_t)len;
+	out.numFields = len;
 	out.fields = out.numFields ? alloc.Alloc<VmNamedDynamicVariable>(out.numFields) : nullptr;
 	for( uint32_t i = 0; i != out.numFields; ++i )
 	{
@@ -998,12 +1008,10 @@ inline bool Read(VmType type, VmDynamicVariable& out, const VmStructSchema* sche
 	case(uint8_t)VmType::Bytes:
 		return ReadArray(out.arrayLength, out.data.bytesArray, reader, alloc);
 	case(uint8_t)VmType::Struct: {
-		const int32_t len = Read4(reader);
-		if( len < 0 )
+		if( !ReadArrayLength(out.arrayLength, reader) )
 		{
 			return false;
 		}
-		out.arrayLength = (uint32_t)len;
 		if( out.arrayLength == 0 )
 		{
 			out.data.structureArray.structs = nullptr;
@@ -1043,25 +1051,25 @@ inline bool Read(VmType type, VmDynamicVariable& out, const VmStructSchema* sche
 		    { v = Read1(r); return true; });
 	case(uint8_t)VmType::Int16:
 		return ReadArray(out.arrayLength, out.data.int16Array, reader, alloc, [](uint16_t& v, ReadView& r)
-		    { v = (uint16_t)Read2(r); return true; });
+		    { v = (uint16_t)Read2(r); return true; }, sizeof(uint16_t));
 	case(uint8_t)VmType::Int32:
 		return ReadArray(out.arrayLength, out.data.int32Array, reader, alloc, [](uint32_t& v, ReadView& r)
-		    { v = (uint32_t)Read4(r); return true; });
+		    { v = (uint32_t)Read4(r); return true; }, sizeof(uint32_t));
 	case(uint8_t)VmType::Int64:
 		return ReadArray(out.arrayLength, out.data.int64Array, reader, alloc, [](uint64_t& v, ReadView& r)
-		    { v = Read8u(r); return true; });
+		    { v = Read8u(r); return true; }, sizeof(uint64_t));
 	case(uint8_t)VmType::Int256:
 		return ReadArray(out.arrayLength, out.data.int256Array, reader, alloc, [](uint256& v, ReadView& r)
 		    { int256 temp; bool ok = Read(temp, r); v = temp.Unsigned(); return ok; });
 	case(uint8_t)VmType::Bytes16:
 		return ReadArray(out.arrayLength, out.data.bytes16Array, reader, alloc, [](Bytes16& v, ReadView& r)
-		    { return r.ReadBytes(v.bytes, Bytes16::length); });
+		    { return r.ReadBytes(v.bytes, Bytes16::length); }, Bytes16::length);
 	case(uint8_t)VmType::Bytes32:
 		return ReadArray(out.arrayLength, out.data.bytes32Array, reader, alloc, [](Bytes32& v, ReadView& r)
-		    { return r.ReadBytes(v.bytes, Bytes32::length); });
+		    { return r.ReadBytes(v.bytes, Bytes32::length); }, Bytes32::length);
 	case(uint8_t)VmType::Bytes64:
 		return ReadArray(out.arrayLength, out.data.bytes64Array, reader, alloc, [](Bytes64& v, ReadView& r)
-		    { return r.ReadBytes(v.bytes, Bytes64::length); });
+		    { return r.ReadBytes(v.bytes, Bytes64::length); }, Bytes64::length);
 	case(uint8_t)VmType::String:
 		return ReadArraySz(out.arrayLength, out.data.stringArray, reader, alloc);
 	default:

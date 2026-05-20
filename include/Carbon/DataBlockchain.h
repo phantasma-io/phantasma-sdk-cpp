@@ -4,6 +4,7 @@
 #endif
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "../Cryptography/EdDSA/Ed25519Signature.h"
@@ -313,16 +314,20 @@ inline bool Read(MsgCallArgs& out, ReadView& reader, Allocator& alloc)
 inline bool Read(MsgCallArgSections& out, ReadView& reader, Allocator& alloc)
 {
 	const int32_t count = Read4(reader);
-	if( count >= 0 )
+	if( count >= 0 || count == std::numeric_limits<int32_t>::min() )
 	{
 		return false;
 	}
 	out.numArgSections_negative = count;
-	const uint32_t length = (uint32_t)(-count);
+	const uint32_t length = (uint32_t)(-(int64_t)count);
 	if( length == 0 )
 	{
 		out.argSections = nullptr;
 		return true;
+	}
+	if( length > reader.length / 4 )
+	{
+		return false;
 	}
 	out.argSections = alloc.Alloc<MsgCallArgs>(length);
 	for( uint32_t i = 0; i != length; ++i )
@@ -357,7 +362,7 @@ inline bool Read(TxMsgCall& out, ReadView& reader, Allocator& alloc)
 inline bool Read(TxMsgCall_Multi& out, ReadView& reader, Allocator& alloc)
 {
 	return ReadArray(out.numCalls, out.calls, reader, alloc, [&](TxMsgCall& call, ReadView& r)
-	    { return Read(call, r, alloc); });
+	    { return Read(call, r, alloc); }, 12);
 }
 
 inline bool Read(TxMsgSpecialResolution& out, ReadView& reader, Allocator& alloc)

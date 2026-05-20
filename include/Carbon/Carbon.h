@@ -189,6 +189,28 @@ inline int32_t Read4(ReadView& r)
 }
 inline uint32_t Read4u(ReadView& r) { return (uint32_t)Read4(r); }
 
+inline size_t ReadLengthFor(ReadView& r, size_t elementSize = 1)
+{
+	const int32_t len = Read4(r);
+	if( len < 0 )
+	{
+		PHANTASMA_EXCEPTION("invalid array length");
+		return 0;
+	}
+	if( elementSize == 0 )
+	{
+		PHANTASMA_EXCEPTION("invalid array element size");
+		return 0;
+	}
+	const size_t length = (size_t)len;
+	if( length > r.length / elementSize )
+	{
+		PHANTASMA_EXCEPTION("array length exceeds remaining bytes");
+		return 0;
+	}
+	return length;
+}
+
 inline int64_t Read8(ReadView& r)
 {
 	int64_t v = 0;
@@ -202,6 +224,12 @@ inline ByteArray ReadExactly(size_t count, ReadView& r)
 	ByteArray out;
 	if( count == 0 )
 	{
+		return out;
+	}
+	if( count > r.length )
+	{
+		PHANTASMA_EXCEPTION("end of stream reached");
+		r.Advance(count);
 		return out;
 	}
 	out.resize(count);
@@ -228,11 +256,10 @@ inline std::string ReadSz(ReadView& r)
 
 inline std::vector<std::string> ReadArraySz(ReadView& r)
 {
-	const auto len = Read4(r);
-	Throw::If(len < 0, "invalid array length");
+	const size_t len = ReadLengthFor(r);
 	std::vector<std::string> out;
-	out.reserve((size_t)len);
-	for( int i = 0; i < len; ++i )
+	out.reserve(len);
+	for( size_t i = 0; i < len; ++i )
 	{
 		out.push_back(ReadSz(r));
 	}
@@ -241,18 +268,16 @@ inline std::vector<std::string> ReadArraySz(ReadView& r)
 
 inline ByteArray ReadArray(ReadView& r)
 {
-	const auto len = Read4(r);
-	Throw::If(len < 0, "invalid array length");
-	return ReadExactly((size_t)len, r);
+	const size_t len = ReadLengthFor(r);
+	return ReadExactly(len, r);
 }
 
 inline std::vector<ByteArray> ReadArrayOfArrays(ReadView& r)
 {
-	const auto len = Read4(r);
-	Throw::If(len < 0, "invalid array length");
+	const size_t len = ReadLengthFor(r, 4);
 	std::vector<ByteArray> out;
-	out.reserve((size_t)len);
-	for( int i = 0; i < len; ++i )
+	out.reserve(len);
+	for( size_t i = 0; i < len; ++i )
 	{
 		out.push_back(ReadArray(r));
 	}
@@ -261,11 +286,10 @@ inline std::vector<ByteArray> ReadArrayOfArrays(ReadView& r)
 
 inline std::vector<uint64_t> ReadArray64u(ReadView& r)
 {
-	const auto len = Read4(r);
-	Throw::If(len < 0, "invalid array length");
+	const size_t len = ReadLengthFor(r, sizeof(uint64_t));
 	std::vector<uint64_t> out;
-	out.reserve((size_t)len);
-	for( int i = 0; i < len; ++i )
+	out.reserve(len);
+	for( size_t i = 0; i < len; ++i )
 	{
 		out.push_back(Read8u(r));
 	}
@@ -274,11 +298,10 @@ inline std::vector<uint64_t> ReadArray64u(ReadView& r)
 
 inline std::vector<int64_t> ReadArray64(ReadView& r)
 {
-	const auto len = Read4(r);
-	Throw::If(len < 0, "invalid array length");
+	const size_t len = ReadLengthFor(r, sizeof(int64_t));
 	std::vector<int64_t> out;
-	out.reserve((size_t)len);
-	for( int i = 0; i < len; ++i )
+	out.reserve(len);
+	for( size_t i = 0; i < len; ++i )
 	{
 		out.push_back(Read8(r));
 	}
@@ -287,11 +310,10 @@ inline std::vector<int64_t> ReadArray64(ReadView& r)
 
 inline std::vector<int32_t> ReadArray32(ReadView& r)
 {
-	const auto len = Read4(r);
-	Throw::If(len < 0, "invalid array length");
+	const size_t len = ReadLengthFor(r, sizeof(int32_t));
 	std::vector<int32_t> out;
-	out.reserve((size_t)len);
-	for( int i = 0; i < len; ++i )
+	out.reserve(len);
+	for( size_t i = 0; i < len; ++i )
 	{
 		out.push_back(Read4(r));
 	}
@@ -300,11 +322,10 @@ inline std::vector<int32_t> ReadArray32(ReadView& r)
 
 inline std::vector<int16_t> ReadArray16(ReadView& r)
 {
-	const auto len = Read4(r);
-	Throw::If(len < 0, "invalid array length");
+	const size_t len = ReadLengthFor(r, sizeof(int16_t));
 	std::vector<int16_t> out;
-	out.reserve((size_t)len);
-	for( int i = 0; i < len; ++i )
+	out.reserve(len);
+	for( size_t i = 0; i < len; ++i )
 	{
 		out.push_back(Read2(r));
 	}
@@ -313,11 +334,10 @@ inline std::vector<int16_t> ReadArray16(ReadView& r)
 
 inline std::vector<int8_t> ReadArray8(ReadView& r)
 {
-	const auto len = Read4(r);
-	Throw::If(len < 0, "invalid array length");
+	const size_t len = ReadLengthFor(r, sizeof(int8_t));
 	std::vector<int8_t> out;
-	out.reserve((size_t)len);
-	for( int i = 0; i < len; ++i )
+	out.reserve(len);
+	for( size_t i = 0; i < len; ++i )
 	{
 		out.push_back((int8_t)Read1(r));
 	}
@@ -440,10 +460,9 @@ inline bool Read(Bytes32& out, ReadView& r) { return r.ReadBytes(out.bytes, Byte
 inline bool Read(Bytes64& out, ReadView& r) { return r.ReadBytes(out.bytes, Bytes64::length); }
 inline bool Read(ByteView& out, ReadView& r)
 {
-	const auto len = Read4(r);
-	Throw::If(len < 0, "invalid array length");
-	out = ByteView{ r.bytes, (size_t)len };
-	return r.Advance((size_t)len);
+	const size_t len = ReadLengthFor(r);
+	out = ByteView{ r.bytes, len };
+	return r.Advance(len);
 }
 inline bool Read(ByteArray& out, ReadView& r)
 {
@@ -475,11 +494,10 @@ inline void WriteArrayInt256(const std::vector<int256>& items, WriteView& w)
 }
 inline std::vector<int256> ReadArrayInt256(ReadView& r)
 {
-	const auto len = Read4(r);
-	Throw::If(len < 0, "invalid array length");
+	const size_t len = ReadLengthFor(r);
 	std::vector<int256> out;
-	out.reserve((size_t)len);
-	for( int32_t i = 0; i < len; ++i )
+	out.reserve(len);
+	for( size_t i = 0; i < len; ++i )
 	{
 		out.push_back(ReadInt256(r));
 	}

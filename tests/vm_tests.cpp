@@ -124,6 +124,16 @@ void RunVmDynamicVariableTests(TestContext& ctx)
 		roundtrip("VmDynamic Int32 " + std::to_string(value), VmType::Int32, input, [&](const VmDynamicVariable& out)
 		    { return out.type == VmType::Int32 && (int32_t)out.data.int32 == value; });
 	}
+	{
+		ByteArray bytes = { 2, 0, 0, 0, 1, 2, 3, 4 };
+		Allocator alloc;
+		ReadView r(bytes.data(), bytes.size());
+		uint32_t length = 0;
+		uint32_t* items = nullptr;
+		const bool ok = ReadArray(length, items, r, alloc, [](uint32_t& v, ReadView& reader)
+		    { v = Read4u(reader); return true; }, sizeof(uint32_t));
+		Report(ctx, !ok && items == nullptr, "VmDynamic fixed-width array length guard rejects truncated data");
+	}
 	for( const uint64_t value : { (uint64_t)0, (uint64_t)1, std::numeric_limits<uint64_t>::max() } )
 	{
 		const VmDynamicVariable input(value);

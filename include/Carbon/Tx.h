@@ -319,7 +319,7 @@ struct MintNonFungibleTxHelper {
 		ByteArray bytes = Base16::Decode(resultHex.c_str(), (int)resultHex.size());
 		ReadView r(bytes.empty() ? nullptr : &bytes.front(), bytes.size());
 		std::vector<Bytes32> result;
-		const uint32_t count = (uint32_t)Read4u(r);
+		const uint32_t count = (uint32_t)ReadLengthFor(r, sizeof(uint64_t));
 		result.reserve(count);
 		for( uint32_t i = 0; i != count; ++i )
 		{
@@ -394,7 +394,7 @@ struct MintPhantasmaNonFungibleTxHelper {
 		ByteArray bytes = Base16::Decode(resultHex.c_str(), (int)resultHex.size());
 		ReadView r(bytes.empty() ? nullptr : &bytes.front(), bytes.size());
 		std::vector<PhantasmaNftMintResult> results;
-		const uint32_t count = (uint32_t)Read4u(r);
+		const uint32_t count = (uint32_t)ReadLengthFor(r, Bytes32::length + sizeof(uint64_t));
 		results.resize(count);
 		for( uint32_t i = 0; i != count; ++i )
 		{
