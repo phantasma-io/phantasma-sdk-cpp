@@ -46,12 +46,14 @@
 //     bool PhantasmaJsonAPI::ParseGetChainResponse(JSONValue, Chain);
 //     void PhantasmaJsonAPI::MakeGetNexusRequest(JSONBuilder, extended);
 //     bool PhantasmaJsonAPI::ParseGetNexusResponse(JSONValue, Nexus);
-//     void PhantasmaJsonAPI::MakeGetOrganizationRequest(JSONBuilder, ID);
+//     void PhantasmaJsonAPI::MakeGetOrganizationRequest(JSONBuilder, name, includeMemberCount);
 //     bool PhantasmaJsonAPI::ParseGetOrganizationResponse(JSONValue, Organization);
-//     void PhantasmaJsonAPI::MakeGetOrganizationByNameRequest(JSONBuilder, name, extended);
-//     bool PhantasmaJsonAPI::ParseGetOrganizationByNameResponse(JSONValue, Organization);
-//     void PhantasmaJsonAPI::MakeGetOrganizationsRequest(JSONBuilder, extended);
-//     bool PhantasmaJsonAPI::ParseGetOrganizationsResponse(JSONValue, vector<Organization>);
+//     void PhantasmaJsonAPI::MakeGetOrganizationsRequest(JSONBuilder, pageSize, cursor, includeMemberCount);
+//     bool PhantasmaJsonAPI::ParseGetOrganizationsResponse(JSONValue, CursorPaginatedResult<Organization>);
+//     void PhantasmaJsonAPI::MakeGetOrganizationMembersRequest(JSONBuilder, name, pageSize, cursor, includeMemberTime);
+//     bool PhantasmaJsonAPI::ParseGetOrganizationMembersResponse(JSONValue, CursorPaginatedResult<OrganizationMember>);
+//     void PhantasmaJsonAPI::MakeGetOrganizationMemberRequest(JSONBuilder, name, address, checkAddressReservedByte, addressType);
+//     bool PhantasmaJsonAPI::ParseGetOrganizationMemberResponse(JSONValue, OrganizationMember);
 //     void PhantasmaJsonAPI::MakeGetLeaderboardRequest(JSONBuilder, name);
 //     bool PhantasmaJsonAPI::ParseGetLeaderboardResponse(JSONValue, Leaderboard);
 //     void PhantasmaJsonAPI::MakeGetTokensRequest(JSONBuilder, extended, ownerAddress);
@@ -129,9 +131,10 @@
 //     vector<Chain> = phantasmaAPI.GetChains(error);
 //     Chain = phantasmaAPI.GetChain(name, extended, error);
 //     Nexus = phantasmaAPI.GetNexus(extended, error);
-//     Organization = phantasmaAPI.GetOrganization(ID, error);
-//     Organization = phantasmaAPI.GetOrganizationByName(name, extended, error);
-//     vector<Organization> = phantasmaAPI.GetOrganizations(extended, error);
+//     Organization = phantasmaAPI.GetOrganization(name, includeMemberCount, error);
+//     CursorPaginatedResult<Organization> = phantasmaAPI.GetOrganizations(pageSize, cursor, includeMemberCount, error);
+//     CursorPaginatedResult<OrganizationMember> = phantasmaAPI.GetOrganizationMembers(name, pageSize, cursor, includeMemberTime, error);
+//     OrganizationMember = phantasmaAPI.GetOrganizationMember(name, address, checkAddressReservedByte, addressType, error);
 //     Leaderboard = phantasmaAPI.GetLeaderboard(name, error);
 //     vector<Token> = phantasmaAPI.GetTokens(extended, error);
 //     vector<Token> = phantasmaAPI.GetTokens(extended, ownerAddress, error);
@@ -655,6 +658,7 @@ struct JSONBuilder // A VERY simple json string builder. Highly recommended that
 	}
 	void AddValues() {}
 	void AddValues(const char* arg) { s << '"' << arg << '"'; }
+	void AddValues(bool arg) { s << (arg ? PHANTASMA_LITERAL("true") : PHANTASMA_LITERAL("false")); }
 	template<class T>
 	void AddValues(T arg) { s << arg; }
 	template<class T, class... Args>
@@ -787,10 +791,24 @@ struct Governance {
 	String value; //
 };
 
+struct TokenProperty {
+	String key;
+	String value;
+};
+
 struct Organization {
-	String id; //
-	String name; //
-	PHANTASMA_VECTOR<String> members; //
+	String name;
+	String owner;
+	String carbonOwner;
+	PHANTASMA_VECTOR<TokenProperty> metadata;
+	String memberCount;
+};
+
+struct OrganizationMember {
+	String address;
+	String carbonAddress;
+	bool isMember;
+	UInt64 memberTime;
 };
 
 struct Nexus {
@@ -1036,11 +1054,6 @@ struct ABIMethod {
 	String name; //
 	String returnType; //
 	PHANTASMA_VECTOR<ABIParameter> parameters; //
-};
-
-struct TokenProperty {
-	String key; //
-	String value; //
 };
 
 struct TokenSeries {
@@ -1294,18 +1307,18 @@ class PhantasmaJsonAPI
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default nexus object.
 	static void MakeGetNexusRequest(JSONBuilder&, bool extended);
 	static bool ParseGetNexusResponse(const JSONValue&, Nexus& out, PhantasmaError* err = 0);
-	// Returns info about an organization.
-	// Warning: this Phantasma RPC method is currently stubbed and returns a default organization object.
-	static void MakeGetOrganizationRequest(JSONBuilder&, const Char* ID);
+	// Returns info about an organization by registered name.
+	static void MakeGetOrganizationRequest(JSONBuilder&, const Char* name, bool includeMemberCount);
 	static bool ParseGetOrganizationResponse(const JSONValue&, Organization& out, PhantasmaError* err = 0);
-	// Returns info about an organization by name.
-	// Warning: this Phantasma RPC method is currently stubbed and returns a default organization object.
-	static void MakeGetOrganizationByNameRequest(JSONBuilder&, const Char* name, bool extended);
-	static bool ParseGetOrganizationByNameResponse(const JSONValue&, Organization& out, PhantasmaError* err = 0);
-	// Returns all organizations deployed in Phantasma.
-	// Warning: this Phantasma RPC method is currently stubbed and returns an empty array.
-	static void MakeGetOrganizationsRequest(JSONBuilder&, bool extended);
-	static bool ParseGetOrganizationsResponse(const JSONValue&, PHANTASMA_VECTOR<Organization>& out, PhantasmaError* err = 0);
+	// Returns organizations with cursor pagination.
+	static void MakeGetOrganizationsRequest(JSONBuilder&, UInt32 pageSize, const Char* cursor, bool includeMemberCount);
+	static bool ParseGetOrganizationsResponse(const JSONValue&, CursorPaginatedResult<Organization>& out, PhantasmaError* err = 0);
+	// Returns organization members by registered name.
+	static void MakeGetOrganizationMembersRequest(JSONBuilder&, const Char* name, UInt32 pageSize, const Char* cursor, bool includeMemberTime);
+	static bool ParseGetOrganizationMembersResponse(const JSONValue&, CursorPaginatedResult<OrganizationMember>& out, PhantasmaError* err = 0);
+	// Returns one organization membership by registered name.
+	static void MakeGetOrganizationMemberRequest(JSONBuilder&, const Char* name, const Char* address, bool checkAddressReservedByte, const Char* addressType);
+	static bool ParseGetOrganizationMemberResponse(const JSONValue&, OrganizationMember& out, PhantasmaError* err = 0);
 	// Returns content of a Phantasma leaderboard.
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default leaderboard object.
 	static void MakeGetLeaderboardRequest(JSONBuilder&, const Char* name);
@@ -1395,6 +1408,7 @@ class PhantasmaJsonAPI
 	static Platform DeserializePlatform(const JSONValue& json, bool& jsonError);
 	static Governance DeserializeGovernance(const JSONValue& json, bool& jsonError);
 	static Organization DeserializeOrganization(const JSONValue& json, bool& jsonError);
+	static OrganizationMember DeserializeOrganizationMember(const JSONValue& json, bool& jsonError);
 	static Nexus DeserializeNexus(const JSONValue& json, bool& jsonError);
 	static Stake DeserializeStake(const JSONValue& json, bool& jsonError);
 	static Storage DeserializeStorage(const JSONValue& json, bool& jsonError);
@@ -1496,15 +1510,15 @@ class PhantasmaAPI
 	// Returns info about the nexus.
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default nexus object.
 	Nexus GetNexus(bool extended, PhantasmaError* out_error = nullptr);
-	// Returns info about an organization.
-	// Warning: this Phantasma RPC method is currently stubbed and returns a default organization object.
-	Organization GetOrganization(const Char* ID, PhantasmaError* out_error = nullptr);
-	// Returns info about an organization by name.
-	// Warning: this Phantasma RPC method is currently stubbed and returns a default organization object.
-	Organization GetOrganizationByName(const Char* name, bool extended, PhantasmaError* out_error = nullptr);
-	// Returns info about all organizations.
-	// Warning: this Phantasma RPC method is currently stubbed and returns an empty array.
-	PHANTASMA_VECTOR<Organization> GetOrganizations(bool extended, PhantasmaError* out_error = nullptr);
+	// Returns info about an organization by registered name.
+	Organization GetOrganization(const Char* name, PhantasmaError* out_error = nullptr);
+	Organization GetOrganization(const Char* name, bool includeMemberCount, PhantasmaError* out_error = nullptr);
+	// Returns organizations with cursor pagination.
+	CursorPaginatedResult<Organization> GetOrganizations(UInt32 pageSize, const Char* cursor, bool includeMemberCount, PhantasmaError* out_error = nullptr);
+	// Returns organization members by registered name.
+	CursorPaginatedResult<OrganizationMember> GetOrganizationMembers(const Char* name, UInt32 pageSize, const Char* cursor, bool includeMemberTime, PhantasmaError* out_error = nullptr);
+	// Returns one organization membership by registered name.
+	OrganizationMember GetOrganizationMember(const Char* name, const Char* address, bool checkAddressReservedByte, const Char* addressType, PhantasmaError* out_error = nullptr);
 	// Returns content of a Phantasma leaderboard.
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default leaderboard object.
 	Leaderboard GetLeaderboard(const Char* name, PhantasmaError* out_error = nullptr);
@@ -1670,21 +1684,33 @@ PHANTASMA_FUNCTION Governance PhantasmaJsonAPI::DeserializeGovernance(const JSON
 
 PHANTASMA_FUNCTION Organization PhantasmaJsonAPI::DeserializeOrganization(const JSONValue& value, bool& jsonErr)
 {
-	PHANTASMA_VECTOR<String> membersVector;
-	if( json::HasArrayField(value, PHANTASMA_LITERAL("members"), jsonErr) )
+	PHANTASMA_VECTOR<TokenProperty> metadataVector;
+	if( json::HasArrayField(value, PHANTASMA_LITERAL("metadata"), jsonErr) )
 	{
-		const JSONArray& membersJsonArray = json::LookupArray(value, PHANTASMA_LITERAL("members"), jsonErr);
-		int size = json::ArraySize(membersJsonArray, jsonErr);
-		membersVector.reserve(size);
+		const JSONArray& metadataJsonArray = json::LookupArray(value, PHANTASMA_LITERAL("metadata"), jsonErr);
+		int size = json::ArraySize(metadataJsonArray, jsonErr);
+		metadataVector.reserve(size);
 		for( int i = 0; i < size; ++i )
 		{
-			membersVector.push_back(json::AsString(json::IndexArray(membersJsonArray, i, jsonErr), jsonErr));
+			metadataVector.push_back(DeserializeTokenProperty(json::IndexArray(metadataJsonArray, i, jsonErr), jsonErr));
 		}
 	}
 	return Organization{
-		json::LookupString(value, PHANTASMA_LITERAL("id"), jsonErr),
-		json::LookupString(value, PHANTASMA_LITERAL("name"), jsonErr),
-		membersVector
+		json::HasField(value, PHANTASMA_LITERAL("name"), jsonErr) ? json::LookupString(value, PHANTASMA_LITERAL("name"), jsonErr) : String(PHANTASMA_LITERAL("")),
+		json::HasField(value, PHANTASMA_LITERAL("owner"), jsonErr) ? json::LookupString(value, PHANTASMA_LITERAL("owner"), jsonErr) : String(PHANTASMA_LITERAL("")),
+		json::HasField(value, PHANTASMA_LITERAL("carbonOwner"), jsonErr) ? json::LookupString(value, PHANTASMA_LITERAL("carbonOwner"), jsonErr) : String(PHANTASMA_LITERAL("")),
+		metadataVector,
+		json::HasField(value, PHANTASMA_LITERAL("memberCount"), jsonErr) ? json::LookupString(value, PHANTASMA_LITERAL("memberCount"), jsonErr) : String(PHANTASMA_LITERAL(""))
+	};
+}
+
+PHANTASMA_FUNCTION OrganizationMember PhantasmaJsonAPI::DeserializeOrganizationMember(const JSONValue& value, bool& jsonErr)
+{
+	return OrganizationMember{
+		json::HasField(value, PHANTASMA_LITERAL("address"), jsonErr) ? json::LookupString(value, PHANTASMA_LITERAL("address"), jsonErr) : String(PHANTASMA_LITERAL("")),
+		json::HasField(value, PHANTASMA_LITERAL("carbonAddress"), jsonErr) ? json::LookupString(value, PHANTASMA_LITERAL("carbonAddress"), jsonErr) : String(PHANTASMA_LITERAL("")),
+		json::HasField(value, PHANTASMA_LITERAL("isMember"), jsonErr) ? json::LookupBool(value, PHANTASMA_LITERAL("isMember"), jsonErr) : false,
+		json::HasField(value, PHANTASMA_LITERAL("memberTime"), jsonErr) ? json::LookupUInt64(value, PHANTASMA_LITERAL("memberTime"), jsonErr) : 0
 	};
 }
 
@@ -3504,14 +3530,14 @@ PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetNexusResponse(const JSONValue&
 	return out_error.code == 0;
 }
 
-// Returns info about an organization.
-PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetOrganizationRequest(JSONBuilder& request, const Char* ID)
+// Returns info about an organization by registered name.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetOrganizationRequest(JSONBuilder& request, const Char* name, bool includeMemberCount)
 {
 	json::BeginObject(request);
 	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
 	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getOrganization"));
 	AddJsonRpcRequestId(request);
-	json::AddArray(request, PHANTASMA_LITERAL("params"), ID);
+	json::AddArray(request, PHANTASMA_LITERAL("params"), name, includeMemberCount);
 	json::EndObject(request);
 }
 
@@ -3529,43 +3555,18 @@ PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetOrganizationResponse(const JSO
 	return out_error.code == 0;
 }
 
-// Returns info about an organization by name.
-PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetOrganizationByNameRequest(JSONBuilder& request, const Char* name, bool extended)
-{
-	json::BeginObject(request);
-	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
-	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getOrganizationByName"));
-	AddJsonRpcRequestId(request);
-	json::AddArray(request, PHANTASMA_LITERAL("params"), name, extended);
-	json::EndObject(request);
-}
-
-PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetOrganizationByNameResponse(const JSONValue& _jsonResponse, Organization& output, PhantasmaError* pout_err)
-{
-	PhantasmaError err_dummy;
-	PhantasmaError& out_error = pout_err ? *pout_err : err_dummy;
-	JSONValue jsonResponse = PhantasmaJsonAPI::CheckResponse(_jsonResponse, out_error);
-	if( out_error.code )
-		return false;
-	bool jsonErr = false;
-	output = DeserializeOrganization(jsonResponse, jsonErr);
-	if( !out_error.code && jsonErr )
-		out_error.code = PhantasmaError::InvalidJSON;
-	return out_error.code == 0;
-}
-
-// Returns info about all organizations.
-PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetOrganizationsRequest(JSONBuilder& request, bool extended)
+// Returns organizations with cursor pagination.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetOrganizationsRequest(JSONBuilder& request, UInt32 pageSize, const Char* cursor, bool includeMemberCount)
 {
 	json::BeginObject(request);
 	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
 	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getOrganizations"));
 	AddJsonRpcRequestId(request);
-	json::AddArray(request, PHANTASMA_LITERAL("params"), extended);
+	json::AddArray(request, PHANTASMA_LITERAL("params"), pageSize, cursor, includeMemberCount);
 	json::EndObject(request);
 }
 
-PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetOrganizationsResponse(const JSONValue& _jsonResponse, PHANTASMA_VECTOR<Organization>& output, PhantasmaError* pout_err)
+PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetOrganizationsResponse(const JSONValue& _jsonResponse, CursorPaginatedResult<Organization>& output, PhantasmaError* pout_err)
 {
 	PhantasmaError err_dummy;
 	PhantasmaError& out_error = pout_err ? *pout_err : err_dummy;
@@ -3573,22 +3574,95 @@ PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetOrganizationsResponse(const JS
 	if( out_error.code )
 		return false;
 	bool jsonErr = false;
-	if( !json::IsArray(jsonResponse, jsonErr) )
+	String cursor = json::HasField(jsonResponse, PHANTASMA_LITERAL("cursor"), jsonErr)
+	                    ? json::LookupString(jsonResponse, PHANTASMA_LITERAL("cursor"), jsonErr)
+	                    : String(PHANTASMA_LITERAL(""));
+	JSONValue resultValue = json::LookupValue(jsonResponse, PHANTASMA_LITERAL("result"), jsonErr);
+	if( !json::IsArray(resultValue, jsonErr) )
 	{
 		PHANTASMA_EXCEPTION("Malformed response: No JSON array on the \"result\" node");
 		out_error.code = PhantasmaError::InvalidJSON;
 		return false;
 	}
 
-	const JSONArray& resultArray = json::AsArray(jsonResponse, jsonErr);
+	const JSONArray& resultArray = json::AsArray(resultValue, jsonErr);
 	int resultArraySize = json::ArraySize(resultArray, jsonErr);
-	output.reserve(resultArraySize);
+	output.result.reserve(resultArraySize);
 	for( int i = 0; i < resultArraySize; ++i )
 	{
-		output.push_back(DeserializeOrganization(json::IndexArray(resultArray, i, jsonErr), jsonErr));
+		output.result.push_back(DeserializeOrganization(json::IndexArray(resultArray, i, jsonErr), jsonErr));
 		if( jsonErr || out_error.code )
 			break;
 	}
+	output.cursor = cursor;
+	if( !out_error.code && jsonErr )
+		out_error.code = PhantasmaError::InvalidJSON;
+	return out_error.code == 0;
+}
+
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetOrganizationMembersRequest(JSONBuilder& request, const Char* name, UInt32 pageSize, const Char* cursor, bool includeMemberTime)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getOrganizationMembers"));
+	AddJsonRpcRequestId(request);
+	json::AddArray(request, PHANTASMA_LITERAL("params"), name, pageSize, cursor, includeMemberTime);
+	json::EndObject(request);
+}
+
+PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetOrganizationMembersResponse(const JSONValue& _jsonResponse, CursorPaginatedResult<OrganizationMember>& output, PhantasmaError* pout_err)
+{
+	PhantasmaError err_dummy;
+	PhantasmaError& out_error = pout_err ? *pout_err : err_dummy;
+	JSONValue jsonResponse = PhantasmaJsonAPI::CheckResponse(_jsonResponse, out_error);
+	if( out_error.code )
+		return false;
+	bool jsonErr = false;
+	String cursor = json::HasField(jsonResponse, PHANTASMA_LITERAL("cursor"), jsonErr)
+	                    ? json::LookupString(jsonResponse, PHANTASMA_LITERAL("cursor"), jsonErr)
+	                    : String(PHANTASMA_LITERAL(""));
+	JSONValue resultValue = json::LookupValue(jsonResponse, PHANTASMA_LITERAL("result"), jsonErr);
+	if( !json::IsArray(resultValue, jsonErr) )
+	{
+		PHANTASMA_EXCEPTION("Malformed response: No JSON array on the \"result\" node");
+		out_error.code = PhantasmaError::InvalidJSON;
+		return false;
+	}
+
+	const JSONArray& resultArray = json::AsArray(resultValue, jsonErr);
+	int resultArraySize = json::ArraySize(resultArray, jsonErr);
+	output.result.reserve(resultArraySize);
+	for( int i = 0; i < resultArraySize; ++i )
+	{
+		output.result.push_back(DeserializeOrganizationMember(json::IndexArray(resultArray, i, jsonErr), jsonErr));
+		if( jsonErr || out_error.code )
+			break;
+	}
+	output.cursor = cursor;
+	if( !out_error.code && jsonErr )
+		out_error.code = PhantasmaError::InvalidJSON;
+	return out_error.code == 0;
+}
+
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetOrganizationMemberRequest(JSONBuilder& request, const Char* name, const Char* address, bool checkAddressReservedByte, const Char* addressType)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getOrganizationMember"));
+	AddJsonRpcRequestId(request);
+	json::AddArray(request, PHANTASMA_LITERAL("params"), name, address, checkAddressReservedByte, addressType);
+	json::EndObject(request);
+}
+
+PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetOrganizationMemberResponse(const JSONValue& _jsonResponse, OrganizationMember& output, PhantasmaError* pout_err)
+{
+	PhantasmaError err_dummy;
+	PhantasmaError& out_error = pout_err ? *pout_err : err_dummy;
+	JSONValue jsonResponse = PhantasmaJsonAPI::CheckResponse(_jsonResponse, out_error);
+	if( out_error.code )
+		return false;
+	bool jsonErr = false;
+	output = DeserializeOrganizationMember(jsonResponse, jsonErr);
 	if( !out_error.code && jsonErr )
 		out_error.code = PhantasmaError::InvalidJSON;
 	return out_error.code == 0;
@@ -4646,10 +4720,15 @@ PHANTASMA_FUNCTION Nexus PhantasmaAPI::GetNexus(bool extended, PhantasmaError* o
 	return output;
 }
 
-PHANTASMA_FUNCTION Organization PhantasmaAPI::GetOrganization(const Char* ID, PhantasmaError* out_error)
+PHANTASMA_FUNCTION Organization PhantasmaAPI::GetOrganization(const Char* name, PhantasmaError* out_error)
+{
+	return GetOrganization(name, false, out_error);
+}
+
+PHANTASMA_FUNCTION Organization PhantasmaAPI::GetOrganization(const Char* name, bool includeMemberCount, PhantasmaError* out_error)
 {
 	JSONBuilder request;
-	PhantasmaJsonAPI::MakeGetOrganizationRequest(request, ID);
+	PhantasmaJsonAPI::MakeGetOrganizationRequest(request, name, includeMemberCount);
 	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
 	PhantasmaJsonAPI::UseRequestId(request);
 	Organization output;
@@ -4658,27 +4737,39 @@ PHANTASMA_FUNCTION Organization PhantasmaAPI::GetOrganization(const Char* ID, Ph
 	return output;
 }
 
-PHANTASMA_FUNCTION Organization PhantasmaAPI::GetOrganizationByName(const Char* name, bool extended, PhantasmaError* out_error)
+PHANTASMA_FUNCTION CursorPaginatedResult<Organization> PhantasmaAPI::GetOrganizations(UInt32 pageSize, const Char* cursor, bool includeMemberCount, PhantasmaError* out_error)
 {
 	JSONBuilder request;
-	PhantasmaJsonAPI::MakeGetOrganizationByNameRequest(request, name, extended);
+	PhantasmaJsonAPI::MakeGetOrganizationsRequest(request, pageSize, cursor, includeMemberCount);
 	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
 	PhantasmaJsonAPI::UseRequestId(request);
-	Organization output;
+	CursorPaginatedResult<Organization> output;
 	if( !out_error || out_error->code == 0 )
-		PhantasmaJsonAPI::ParseGetOrganizationByNameResponse(json::Parse(response), output, out_error);
+		PhantasmaJsonAPI::ParseGetOrganizationsResponse(json::Parse(response), output, out_error);
 	return output;
 }
 
-PHANTASMA_FUNCTION PHANTASMA_VECTOR<Organization> PhantasmaAPI::GetOrganizations(bool extended, PhantasmaError* out_error)
+PHANTASMA_FUNCTION CursorPaginatedResult<OrganizationMember> PhantasmaAPI::GetOrganizationMembers(const Char* name, UInt32 pageSize, const Char* cursor, bool includeMemberTime, PhantasmaError* out_error)
 {
 	JSONBuilder request;
-	PhantasmaJsonAPI::MakeGetOrganizationsRequest(request, extended);
+	PhantasmaJsonAPI::MakeGetOrganizationMembersRequest(request, name, pageSize, cursor, includeMemberTime);
 	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
 	PhantasmaJsonAPI::UseRequestId(request);
-	PHANTASMA_VECTOR<Organization> output;
+	CursorPaginatedResult<OrganizationMember> output;
 	if( !out_error || out_error->code == 0 )
-		PhantasmaJsonAPI::ParseGetOrganizationsResponse(json::Parse(response), output, out_error);
+		PhantasmaJsonAPI::ParseGetOrganizationMembersResponse(json::Parse(response), output, out_error);
+	return output;
+}
+
+PHANTASMA_FUNCTION OrganizationMember PhantasmaAPI::GetOrganizationMember(const Char* name, const Char* address, bool checkAddressReservedByte, const Char* addressType, PhantasmaError* out_error)
+{
+	JSONBuilder request;
+	PhantasmaJsonAPI::MakeGetOrganizationMemberRequest(request, name, address, checkAddressReservedByte, addressType);
+	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
+	PhantasmaJsonAPI::UseRequestId(request);
+	OrganizationMember output;
+	if( !out_error || out_error->code == 0 )
+		PhantasmaJsonAPI::ParseGetOrganizationMemberResponse(json::Parse(response), output, out_error);
 	return output;
 }
 
@@ -5363,6 +5454,12 @@ PHANTASMA_FUNCTION UInt64 AsUInt64(const JSONValue& v, bool& out_error)
 	JSONValue source = ExtractNumeric(v, out_error);
 	if( out_error )
 		return 0;
+	if( source.length() < 1 || source[0] == '-' )
+	{
+		PHANTASMA_EXCEPTION("Invalid unsigned number");
+		out_error = true;
+		return 0;
+	}
 	const Char* numeric = PHANTASMA_LITERAL("-0123456789");
 	size_t begin = source.find_first_of(numeric, 0);
 	if( begin != 0 )

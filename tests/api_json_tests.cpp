@@ -4,6 +4,16 @@
 namespace testcases {
 using namespace testutil;
 
+namespace {
+void ReportJsonRpcRequest(TestContext& ctx, const JSONBuilder& request, const char* method, const char* params, const char* label)
+{
+	const std::string requestId = rpc::PhantasmaJsonAPI::RequestId(request);
+	const std::string expected = std::string("{\"jsonrpc\": \"2.0\", \"method\": \"") + method +
+	                             "\", \"id\": \"" + requestId + "\", \"params\": " + params + "}";
+	Report(ctx, request.s.str() == expected, label);
+}
+} // namespace
+
 void RunApiJsonNumericFlexTests(TestContext& ctx)
 {
 	rpc::PhantasmaJsonAPI::UseRequestId("1");
@@ -82,6 +92,11 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		bool err = false;
 		const UInt64 value = json::AsUInt64(JSONValue{ "\"18446744073709551615\"" }, err);
 		Report(ctx, !err && value == std::numeric_limits<UInt64>::max(), "API JSON AsUInt64 accepts quoted numeric");
+	}
+	{
+		bool err = false;
+		const UInt64 value = json::AsUInt64(JSONValue{ "\"-1\"" }, err);
+		Report(ctx, err && value == 0, "API JSON AsUInt64 rejects negative numeric");
 	}
 	{
 		rpc::PhantasmaError err{};
@@ -279,6 +294,95 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		Report(ctx,
 		    ok && err.code == 0 && token.symbol == "CROWN" && token.carbonId.empty(),
 		    "API GetToken parser ignores stale-only carbonID without alias mapping");
+	}
+	{
+		JSONBuilder request;
+		rpc::PhantasmaJsonAPI::MakeGetOrganizationRequest(request, "masters", true);
+		ReportJsonRpcRequest(
+		    ctx,
+		    request,
+		    "getOrganization",
+		    "[\"masters\", true]",
+		    "API GetOrganization builder sends exact name and includeMemberCount request");
+	}
+	{
+		JSONBuilder request;
+		rpc::PhantasmaJsonAPI::MakeGetOrganizationsRequest(request, 2, "cursor", true);
+		ReportJsonRpcRequest(
+		    ctx,
+		    request,
+		    "getOrganizations",
+		    "[2, \"cursor\", true]",
+		    "API GetOrganizations builder sends exact cursor pagination request");
+	}
+	{
+		JSONBuilder request;
+		rpc::PhantasmaJsonAPI::MakeGetOrganizationMembersRequest(request, "masters", 2, "cursor", false);
+		ReportJsonRpcRequest(
+		    ctx,
+		    request,
+		    "getOrganizationMembers",
+		    "[\"masters\", 2, \"cursor\", false]",
+		    "API GetOrganizationMembers builder sends exact name-first cursor request");
+	}
+	{
+		JSONBuilder request;
+		rpc::PhantasmaJsonAPI::MakeGetOrganizationMemberRequest(request, "masters", "P-member", true, "Carbon");
+		ReportJsonRpcRequest(
+		    ctx,
+		    request,
+		    "getOrganizationMember",
+		    "[\"masters\", \"P-member\", true, \"Carbon\"]",
+		    "API GetOrganizationMember builder sends exact name-first member request");
+	}
+	{
+		rpc::PhantasmaError err{};
+		rpc::Organization org{};
+		const JSONDocument doc = R"({"id":"1","result":{"name":"masters","owner":"P-owner","carbonOwner":"0x-owner","metadata":[{"key":"role","value":"validators"}],"memberCount":"2"}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetOrganizationResponse(json::Parse(doc), org, &err);
+		Report(ctx,
+		    ok && err.code == 0 && org.name == "masters" && org.carbonOwner == "0x-owner" &&
+		        org.metadata.size() == 1 && org.metadata[0].key == "role" && org.memberCount == "2",
+		    "API GetOrganization parser reads current organization fields");
+	}
+	{
+		rpc::PhantasmaError err{};
+		rpc::CursorPaginatedResult<rpc::Organization> page{};
+		const JSONDocument doc = R"({"id":"1","result":{"result":[{"name":"masters"}],"cursor":"next"}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetOrganizationsResponse(json::Parse(doc), page, &err);
+		Report(ctx,
+		    ok && err.code == 0 && page.result.size() == 1 && page.result[0].name == "masters" &&
+		        page.cursor == "next",
+		    "API GetOrganizations parser reads cursor-paginated organizations");
+	}
+	{
+		rpc::PhantasmaError err{};
+		rpc::CursorPaginatedResult<rpc::OrganizationMember> members{};
+		const JSONDocument doc = R"({"id":"1","result":{"result":[{"address":"P-member","carbonAddress":"0x-member","isMember":true,"memberTime":123}],"cursor":""}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetOrganizationMembersResponse(json::Parse(doc), members, &err);
+		Report(ctx,
+		    ok && err.code == 0 && members.result.size() == 1 && members.result[0].isMember &&
+		        members.result[0].memberTime == 123,
+		    "API GetOrganizationMembers parser reads current member fields");
+	}
+	{
+		rpc::PhantasmaError err{};
+		rpc::OrganizationMember member{};
+		const JSONDocument doc = R"({"id":"1","result":{"address":"P-member","carbonAddress":"0x-member","isMember":true,"memberTime":123}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetOrganizationMemberResponse(json::Parse(doc), member, &err);
+		Report(ctx,
+		    ok && err.code == 0 && member.address == "P-member" && member.carbonAddress == "0x-member" &&
+		        member.isMember && member.memberTime == 123,
+		    "API GetOrganizationMember parser reads current member fields");
+	}
+	{
+		rpc::PhantasmaError err{};
+		rpc::OrganizationMember member{};
+		const JSONDocument doc = R"({"id":"1","result":{"address":"P-member","isMember":true,"memberTime":-1}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetOrganizationMemberResponse(json::Parse(doc), member, &err);
+		Report(ctx,
+		    !ok && err.code == rpc::PhantasmaError::InvalidJSON,
+		    "API GetOrganizationMember parser rejects negative memberTime");
 	}
 }
 
