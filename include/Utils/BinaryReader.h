@@ -178,17 +178,20 @@ class BinaryReader
 	{
 		Int64 numBytes = 0;
 		ReadVarInt(numBytes);
-		if( numBytes == 0 )
+		// numBytes is attacker-controlled (a wire varint, up to a full int64). Reject any length
+		// beyond the optional caller cap or the bytes remaining in the stream BEFORE resizing, so a
+		// crafted length cannot force a huge allocation (and the int64->int narrowing below cannot go
+		// negative). Replay-safe: a valid payload always carries its declared bytes, so a real
+		// transaction is never rejected (an over-read would have failed anyway, after the alloc).
+		if( numBytes < 0 || (maxToRead && numBytes > maxToRead) || numBytes > (Int64)(stream.size() - cursor) )
+		{
+			error = true;
+			PHANTASMA_EXCEPTION("Unexpected byte array size");
+		}
+		else if( numBytes == 0 )
 			bytes.resize(0);
 		else
-		{
-			if( maxToRead && numBytes > maxToRead )
-			{
-				error = true;
-				PHANTASMA_EXCEPTION("Unexpected byte array size");
-			}
 			Read(bytes, (int)numBytes);
-		}
 	}
 	int ReadByteArray(Byte* bytes, int maxToRead)
 	{
@@ -235,13 +238,22 @@ class BinaryReader
 		Int64 numBytes = 0;
 		ByteArray bytes;
 		ReadVarInt(numBytes);
-		if( numBytes == 0 )
+		// Same bound as ReadByteArray: a declared length cannot exceed the bytes remaining in the
+		// stream; reject before resizing so a crafted length cannot force a huge allocation.
+		// Replay-safe — a real payload always carries its declared bytes.
+		if( numBytes < 0 || numBytes > (Int64)(stream.size() - cursor) )
 		{
+			error = true;
+			PHANTASMA_EXCEPTION("Unexpected string size");
 			text = String{};
-			return;
 		}
-		Read(bytes, (int)numBytes);
-		text = FromUTF8Bytes(bytes);
+		else if( numBytes == 0 )
+			text = String{};
+		else
+		{
+			Read(bytes, (int)numBytes);
+			text = FromUTF8Bytes(bytes);
+		}
 	}
 
 	void ReadAddress(Address& address);
