@@ -199,7 +199,11 @@ class BinaryReader
 		ReadVarInt(numBytes);
 		if( numBytes )
 		{
-			if( numBytes > maxToRead )
+			// Reject negative as well as oversize. ReadVarInt can yield a negative Int64 (a 0xFF-prefixed
+			// wire value with the high bit set); a negative count would otherwise slip past the cap check
+			// (negative is not > maxToRead) and leave the caller reading an uninitialized buffer. Mirrors
+			// the allocating ReadByteArray overload.
+			if( numBytes < 0 || numBytes > maxToRead )
 			{
 				error = true;
 				PHANTASMA_EXCEPTION("Unexpected byte array size");

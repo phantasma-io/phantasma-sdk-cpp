@@ -76,6 +76,58 @@ void RunVmObjectTests(TestContext& ctx)
 		}
 		Report(ctx, ok, "VMObject Struct");
 	}
+
+	// BinaryReader length-bound tests. PHANTASMA_EXCEPTION_ENABLE is set for the test build, so a rejected
+	// length throws; we catch and assert the error flag (which is set regardless of the throw).
+	{
+		// Positive control: a valid fixed-buffer ReadByteArray decodes and returns the real count.
+		ByteArray okBuf = { (Byte)0x03, (Byte)0x10, (Byte)0x20, (Byte)0x30 };
+		BinaryReader r(okBuf);
+		Byte out[16] = {};
+		const int count = r.ReadByteArray(out, (int)sizeof(out));
+		Report(ctx, !r.Error() && count == 3, "BinaryReader fixed-buffer ReadByteArray valid length");
+	}
+	{
+		// Negative length (0xFF prefix + eight 0xFF bytes = -1) must be rejected, not read as -1 (which
+		// would leave the VM LOAD opcode reading an uninitialized buffer).
+		ByteArray evil = { (Byte)0xFF, (Byte)0xFF, (Byte)0xFF, (Byte)0xFF, (Byte)0xFF, (Byte)0xFF, (Byte)0xFF, (Byte)0xFF, (Byte)0xFF };
+		BinaryReader r(evil);
+		Byte out[16] = {};
+		try
+		{
+			r.ReadByteArray(out, (int)sizeof(out));
+		}
+		catch( ... )
+		{}
+		Report(ctx, r.Error(), "BinaryReader fixed-buffer ReadByteArray rejects negative length");
+	}
+	{
+		// Backfill of the Fix C bound test (not ported earlier): allocating ReadByteArray must reject a
+		// length beyond the stream (varint = 2^32, no bytes follow).
+		ByteArray evil = { (Byte)0xFF, (Byte)0x00, (Byte)0x00, (Byte)0x00, (Byte)0x00, (Byte)0x01, (Byte)0x00, (Byte)0x00, (Byte)0x00 };
+		BinaryReader r(evil);
+		ByteArray got;
+		try
+		{
+			r.ReadByteArray(got);
+		}
+		catch( ... )
+		{}
+		Report(ctx, r.Error() && got.empty(), "BinaryReader ReadByteArray rejects length beyond stream");
+	}
+	{
+		// Backfill: ReadVarString must reject a length beyond the stream.
+		ByteArray evil = { (Byte)0xFF, (Byte)0x00, (Byte)0x00, (Byte)0x00, (Byte)0x00, (Byte)0x01, (Byte)0x00, (Byte)0x00, (Byte)0x00 };
+		BinaryReader r(evil);
+		String s;
+		try
+		{
+			r.ReadVarString(s);
+		}
+		catch( ... )
+		{}
+		Report(ctx, r.Error(), "BinaryReader ReadVarString rejects length beyond stream");
+	}
 #else
 	(void)ctx;
 #endif
