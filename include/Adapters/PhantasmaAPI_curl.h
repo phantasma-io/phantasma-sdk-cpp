@@ -137,6 +137,7 @@ class ReallocBuffer // buffer class for CURL to write responses into
 class CurlClient // Very simple wrapper around CURL
 {
 	void* m_curl = 0;
+	curl_slist* m_headers = 0; // owned request header list (e.g. X-Api-Key); null when no extra headers
 
   public:
 	const PHANTASMA_STRING host;
@@ -145,15 +146,23 @@ class CurlClient // Very simple wrapper around CURL
 	rapidjson::Document doc;
 #endif
 
-	CurlClient(const PHANTASMA_STRING& host = "http://localhost:7077", size_t maxResponseBytes = PHANTASMA_DEFAULT_MAX_RPC_RESPONSE_BYTES)
+	CurlClient(const PHANTASMA_STRING& host = "http://localhost:7077", size_t maxResponseBytes = PHANTASMA_DEFAULT_MAX_RPC_RESPONSE_BYTES, const PHANTASMA_STRING& apiKey = PHANTASMA_STRING())
 	    : host(host), result(maxResponseBytes)
 	{
 		m_curl = curl_easy_init();
 		curl_easy_setopt(m_curl, CURLOPT_WRITEFUNCTION, ReallocBuffer::CurlWrite);
+		if( !apiKey.empty() )
+		{
+			const PHANTASMA_STRING header = PHANTASMA_STRING("X-Api-Key: ") + apiKey;
+			m_headers = curl_slist_append(m_headers, header.c_str());
+			curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, m_headers);
+		}
 	}
 	~CurlClient()
 	{
 		curl_easy_cleanup(m_curl);
+		if( m_headers )
+			curl_slist_free_all(m_headers);
 	}
 	CURLcode Post(const char* data, size_t dataLen, const char* url)
 	{
