@@ -164,6 +164,10 @@ class CurlClient // Very simple wrapper around CURL
 		if( m_headers )
 			curl_slist_free_all(m_headers);
 	}
+	// Owns raw CURL + header-list handles freed above; copying would double-free both. The client is
+	// always used as a local or by reference (see HttpPost), so it is intentionally non-copyable.
+	CurlClient(const CurlClient&) = delete;
+	CurlClient& operator=(const CurlClient&) = delete;
 	CURLcode Post(const char* data, size_t dataLen, const char* url)
 	{
 		result.clear();
