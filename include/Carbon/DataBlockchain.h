@@ -37,6 +37,10 @@ struct ChainConfig {
 	uint32_t blockRateTarget = 0;
 };
 
+// On-chain gas configuration (governance module). The gas-model-v2 extension fields serialize
+// only for version >= 1, mirroring the node's data_blockchain.h wire format exactly: the
+// version-0 byte image is frozen forever for historical replay, and a version>=1 image
+// truncated to the v0 length fails to parse (Read returns false).
 struct GasConfig {
 	uint8_t version = 0;
 	uint8_t maxNameLength = 0;
@@ -57,6 +61,33 @@ struct GasConfig {
 	uint64_t gasFeeRegisterName = 0;
 	uint64_t gasBurnRatioMul = 0;
 	uint8_t gasBurnRatioShift = 0;
+
+	// Gas-model-v2 extension (version >= 1 only).
+
+	// Floor applied to every settled gas bill (kcal-base). 0 = no floor (v1-equivalent).
+	uint64_t minimumGasBill = 0;
+	// Fee split: bill portions credited to the block producer and to the tx gasTarget dapp
+	// address. Same mul/shift fixed-point form as the burn ratio; 0/0 = v1-equivalent.
+	uint64_t gasProducerRatioMul = 0;
+	uint8_t gasProducerRatioShift = 0;
+	uint64_t gasDappRatioMul = 0;
+	uint8_t gasDappRatioShift = 0;
+	// Product-decision prices ("policy fees") in kcal-base, charged directly with no fee
+	// multiplier stage. Under v2 they replace the unit-priced gasFeeCreateToken* and
+	// gasFeeRegisterName fields, which stay serialized for version-0 replay.
+	uint64_t policyFeeCreateTokenBase = 0;
+	// Halved per symbol char after the first (v1 rule kept).
+	uint64_t policyFeeCreateTokenSymbol = 0;
+	uint64_t policyFeeCreateTokenSeries = 0;
+	// Shifted right by (nameLength-1) like the v1 field (v1 rule kept).
+	uint64_t policyFeeRegisterName = 0;
+	// The frozen pre-flip dataEscrowPerRow: storage rows existing before the v2 flip refund at
+	// this price (exactly what they escrowed under v1). Immutable after the flip.
+	uint64_t legacyDataEscrowPerRow = 0;
+
+	// True when this config activates the gas-model-v2 billing rules (config version >= 1).
+	// The gas model is gated by the config version, not by a chain feature level.
+	bool HasGasModelV2() const { return version >= 1; }
 };
 
 struct MsgCallArgs {
@@ -293,6 +324,73 @@ inline void Write(const GasConfig& in, WriteView& w)
 	Write8u(in.gasFeeRegisterName, w);
 	Write8u(in.gasBurnRatioMul, w);
 	Write1(in.gasBurnRatioShift, w);
+	if( in.version == 0 )
+	{
+		// Version-0 wire image must stay byte-identical to the pre-v2 layout.
+		return;
+	}
+	Write8u(in.minimumGasBill, w);
+	Write8u(in.gasProducerRatioMul, w);
+	Write1(in.gasProducerRatioShift, w);
+	Write8u(in.gasDappRatioMul, w);
+	Write1(in.gasDappRatioShift, w);
+	Write8u(in.policyFeeCreateTokenBase, w);
+	Write8u(in.policyFeeCreateTokenSymbol, w);
+	Write8u(in.policyFeeCreateTokenSeries, w);
+	Write8u(in.policyFeeRegisterName, w);
+	Write8u(in.legacyDataEscrowPerRow, w);
+}
+// Returns false on a truncated image (fallible-read convention, exceptions are optional in
+// this SDK).
+inline bool Read(GasConfig& out, ReadView& r)
+{
+	if( !(r.ReadBytes(out.version) &&
+	        r.ReadBytes(out.maxNameLength) &&
+	        r.ReadBytes(out.maxTokenSymbolLength) &&
+	        r.ReadBytes(out.feeShift) &&
+	        r.ReadBytes(out.maxStructureSize) &&
+	        r.ReadBytes(out.feeMultiplier) &&
+	        r.ReadBytes(out.gasTokenId) &&
+	        r.ReadBytes(out.dataTokenId) &&
+	        r.ReadBytes(out.minimumGasOffer) &&
+	        r.ReadBytes(out.dataEscrowPerRow) &&
+	        r.ReadBytes(out.gasFeeTransfer) &&
+	        r.ReadBytes(out.gasFeeQuery) &&
+	        r.ReadBytes(out.gasFeeCreateTokenBase) &&
+	        r.ReadBytes(out.gasFeeCreateTokenSymbol) &&
+	        r.ReadBytes(out.gasFeeCreateTokenSeries) &&
+	        r.ReadBytes(out.gasFeePerByte) &&
+	        r.ReadBytes(out.gasFeeRegisterName) &&
+	        r.ReadBytes(out.gasBurnRatioMul) &&
+	        r.ReadBytes(out.gasBurnRatioShift)) )
+		return false;
+	if( out.version == 0 )
+	{
+		// Version-0 rows carry no v2 tail; zero it so a reused instance never leaks stale values.
+		out.minimumGasBill = 0;
+		out.gasProducerRatioMul = 0;
+		out.gasProducerRatioShift = 0;
+		out.gasDappRatioMul = 0;
+		out.gasDappRatioShift = 0;
+		out.policyFeeCreateTokenBase = 0;
+		out.policyFeeCreateTokenSymbol = 0;
+		out.policyFeeCreateTokenSeries = 0;
+		out.policyFeeRegisterName = 0;
+		out.legacyDataEscrowPerRow = 0;
+		return true;
+	}
+	// version >= 1: the tail is mandatory; a truncated image must FAIL to parse, never
+	// silently produce a config with zeroed v2 prices.
+	return r.ReadBytes(out.minimumGasBill) &&
+	       r.ReadBytes(out.gasProducerRatioMul) &&
+	       r.ReadBytes(out.gasProducerRatioShift) &&
+	       r.ReadBytes(out.gasDappRatioMul) &&
+	       r.ReadBytes(out.gasDappRatioShift) &&
+	       r.ReadBytes(out.policyFeeCreateTokenBase) &&
+	       r.ReadBytes(out.policyFeeCreateTokenSymbol) &&
+	       r.ReadBytes(out.policyFeeCreateTokenSeries) &&
+	       r.ReadBytes(out.policyFeeRegisterName) &&
+	       r.ReadBytes(out.legacyDataEscrowPerRow);
 }
 
 // Tx message serialization ---------------------------------------------------

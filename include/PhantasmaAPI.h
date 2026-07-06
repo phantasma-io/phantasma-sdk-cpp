@@ -44,6 +44,8 @@
 //     bool PhantasmaJsonAPI::ParseGetChainsResponse(JSONValue, vector<Chain>);
 //     void PhantasmaJsonAPI::MakeGetChainRequest(JSONBuilder, name, extended);
 //     bool PhantasmaJsonAPI::ParseGetChainResponse(JSONValue, Chain);
+//     void PhantasmaJsonAPI::MakeGetGasConfigRequest(JSONBuilder);
+//     bool PhantasmaJsonAPI::ParseGetGasConfigResponse(JSONValue, GasConfigResult);
 //     void PhantasmaJsonAPI::MakeGetNexusRequest(JSONBuilder, extended);
 //     bool PhantasmaJsonAPI::ParseGetNexusResponse(JSONValue, Nexus);
 //     void PhantasmaJsonAPI::MakeGetOrganizationRequest(JSONBuilder, name, includeMemberCount);
@@ -734,6 +736,7 @@ namespace rpc {
 //------------------------------------------------------------------------------
 struct Token;
 struct Chain;
+struct GasConfigResult;
 struct Governance;
 struct Leaderboard;
 
@@ -881,6 +884,53 @@ struct Chain {
 	String organization; //
 	PHANTASMA_VECTOR<String> contracts; //
 	PHANTASMA_VECTOR<String> dapps; //
+};
+
+// JSON shape of the on-chain GasConfig served by getGasConfig. 64-bit values arrive as decimal
+// strings on the wire (JSON-number precision) and are parsed to integers here. Fields after
+// gasBurnRatioShift exist only when version >= 1 (gas-model-v2); they parse as 0 for v1 configs
+// and hasV2Fields reports their presence.
+struct GasConfigData {
+	UInt32 version; // config version; >= 1 activates gas-model-v2 billing
+	UInt32 maxNameLength; //
+	UInt32 maxTokenSymbolLength; //
+	UInt32 feeShift; // right-shift applied after the fee multiplier stage
+	UInt32 maxStructureSize; //
+	UInt64 feeMultiplier; // multiplier from gas units to kcal-base
+	UInt64 gasTokenId; //
+	UInt64 dataTokenId; //
+	UInt64 minimumGasOffer; // minimum acceptable maxGas offer
+	UInt64 dataEscrowPerRow; // storage escrow price per 1024-byte row quantum, data-token atoms
+	UInt64 gasFeeTransfer; // gas units charged per native transfer-class operation
+	UInt64 gasFeeQuery; //
+	UInt64 gasFeeCreateTokenBase; //
+	UInt64 gasFeeCreateTokenSymbol; //
+	UInt64 gasFeeCreateTokenSeries; //
+	UInt64 gasFeePerByte; // v1 price of block-carried bytes, kcal-base per byte (unused under v2)
+	UInt64 gasFeeRegisterName; //
+	UInt64 gasBurnRatioMul; //
+	UInt32 gasBurnRatioShift; //
+	bool hasV2Fields; // true when the v2 tail below was present in the response
+	UInt64 minimumGasBill; // v2: floor applied to every settled gas bill, kcal-base
+	UInt64 gasProducerRatioMul; // v2: producer fee-split ratio numerator
+	UInt32 gasProducerRatioShift; //
+	UInt64 gasDappRatioMul; // v2: dapp (gasTarget) fee-split ratio numerator
+	UInt32 gasDappRatioShift; //
+	UInt64 policyFeeCreateTokenBase; // v2: token creation price, kcal-base (no multiplier)
+	UInt64 policyFeeCreateTokenSymbol; // v2: symbol price, halved per char after the first
+	UInt64 policyFeeCreateTokenSeries; //
+	UInt64 policyFeeRegisterName; // v2: name price, shifted right by (length-1)
+	UInt64 legacyDataEscrowPerRow; // v2: frozen pre-flip dataEscrowPerRow (pre-flip row refunds)
+};
+
+// getGasConfig response: the current on-chain gas configuration plus the chain parameters fee
+// estimation needs. Changes only via governance resolutions, so the result is safe to cache.
+struct GasConfigResult {
+	UInt32 gasModelVersion; // 1 = original fee model, 2 = gas-model-v2 (config version >= 1)
+	GasConfigData gasConfig; //
+	UInt32 blockRateTarget; // chain block rate target in milliseconds
+	UInt32 expiryWindow; // transaction expiry window in milliseconds
+	UInt32 unitsPerBlockDataByte; // v2 price of block bytes in gas units per byte; 0 under v1
 };
 
 struct Event {
@@ -1303,6 +1353,10 @@ class PhantasmaJsonAPI
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default chain object.
 	static void MakeGetChainRequest(JSONBuilder&, const Char* name, bool extended);
 	static bool ParseGetChainResponse(const JSONValue&, Chain& out, PhantasmaError* err = 0);
+	// Returns the current on-chain gas configuration, gas model version and fee-estimation
+	// chain parameters. Changes only via governance resolutions, so the result is cacheable.
+	static void MakeGetGasConfigRequest(JSONBuilder&);
+	static bool ParseGetGasConfigResponse(const JSONValue&, GasConfigResult& out, PhantasmaError* err = 0);
 	// Returns info about the nexus.
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default nexus object.
 	static void MakeGetNexusRequest(JSONBuilder&, bool extended);
@@ -1417,6 +1471,8 @@ class PhantasmaJsonAPI
 	static Leaderboard DeserializeLeaderboard(const JSONValue& json, bool& jsonError);
 	static Dapp DeserializeDapp(const JSONValue& json, bool& jsonError);
 	static Chain DeserializeChain(const JSONValue& json, bool& jsonError);
+	static GasConfigData DeserializeGasConfigData(const JSONValue& json, bool& jsonError);
+	static GasConfigResult DeserializeGasConfigResult(const JSONValue& json, bool& jsonError);
 	static Event DeserializeEvent(const JSONValue& json, bool& jsonError);
 	static EventExtended DeserializeEventExtended(const JSONValue& json, bool& jsonError);
 	static TokenCreateData DeserializeTokenCreateData(const JSONValue& json, bool& jsonError);
@@ -1507,6 +1563,9 @@ class PhantasmaAPI
 	// Returns info about a specific chain.
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default chain object.
 	Chain GetChain(const Char* name, bool extended, PhantasmaError* out_error = nullptr);
+	// Returns the current on-chain gas configuration, gas model version and fee-estimation
+	// chain parameters. Changes only via governance resolutions, so the result is cacheable.
+	GasConfigResult GetGasConfig(PhantasmaError* out_error = nullptr);
 	// Returns info about the nexus.
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default nexus object.
 	Nexus GetNexus(bool extended, PhantasmaError* out_error = nullptr);
@@ -1918,6 +1977,62 @@ PHANTASMA_FUNCTION Chain PhantasmaJsonAPI::DeserializeChain(const JSONValue& val
 		contractsVector,
 		dappsVector
 	};
+}
+
+PHANTASMA_FUNCTION GasConfigData PhantasmaJsonAPI::DeserializeGasConfigData(const JSONValue& value, bool& jsonErr)
+{
+	GasConfigData out{};
+	out.version = json::LookupUInt32(value, PHANTASMA_LITERAL("version"), jsonErr);
+	out.maxNameLength = json::LookupUInt32(value, PHANTASMA_LITERAL("maxNameLength"), jsonErr);
+	out.maxTokenSymbolLength = json::LookupUInt32(value, PHANTASMA_LITERAL("maxTokenSymbolLength"), jsonErr);
+	out.feeShift = json::LookupUInt32(value, PHANTASMA_LITERAL("feeShift"), jsonErr);
+	out.maxStructureSize = json::LookupUInt32(value, PHANTASMA_LITERAL("maxStructureSize"), jsonErr);
+	out.feeMultiplier = json::LookupUInt64(value, PHANTASMA_LITERAL("feeMultiplier"), jsonErr);
+	out.gasTokenId = json::LookupUInt64(value, PHANTASMA_LITERAL("gasTokenId"), jsonErr);
+	out.dataTokenId = json::LookupUInt64(value, PHANTASMA_LITERAL("dataTokenId"), jsonErr);
+	out.minimumGasOffer = json::LookupUInt64(value, PHANTASMA_LITERAL("minimumGasOffer"), jsonErr);
+	out.dataEscrowPerRow = json::LookupUInt64(value, PHANTASMA_LITERAL("dataEscrowPerRow"), jsonErr);
+	out.gasFeeTransfer = json::LookupUInt64(value, PHANTASMA_LITERAL("gasFeeTransfer"), jsonErr);
+	out.gasFeeQuery = json::LookupUInt64(value, PHANTASMA_LITERAL("gasFeeQuery"), jsonErr);
+	out.gasFeeCreateTokenBase = json::LookupUInt64(value, PHANTASMA_LITERAL("gasFeeCreateTokenBase"), jsonErr);
+	out.gasFeeCreateTokenSymbol = json::LookupUInt64(value, PHANTASMA_LITERAL("gasFeeCreateTokenSymbol"), jsonErr);
+	out.gasFeeCreateTokenSeries = json::LookupUInt64(value, PHANTASMA_LITERAL("gasFeeCreateTokenSeries"), jsonErr);
+	out.gasFeePerByte = json::LookupUInt64(value, PHANTASMA_LITERAL("gasFeePerByte"), jsonErr);
+	out.gasFeeRegisterName = json::LookupUInt64(value, PHANTASMA_LITERAL("gasFeeRegisterName"), jsonErr);
+	out.gasBurnRatioMul = json::LookupUInt64(value, PHANTASMA_LITERAL("gasBurnRatioMul"), jsonErr);
+	out.gasBurnRatioShift = json::LookupUInt32(value, PHANTASMA_LITERAL("gasBurnRatioShift"), jsonErr);
+	// The v2 tail exists only for version >= 1 configs. A v2 config missing any tail field is
+	// malformed - estimating fees from silently zeroed v2 prices would produce rejected
+	// transactions - so absence flags jsonErr instead of defaulting.
+	out.hasV2Fields = out.version >= 1;
+	if( out.hasV2Fields )
+	{
+		out.minimumGasBill = json::HasField(value, PHANTASMA_LITERAL("minimumGasBill"), jsonErr) ? json::LookupUInt64(value, PHANTASMA_LITERAL("minimumGasBill"), jsonErr) : (jsonErr = true, 0);
+		out.gasProducerRatioMul = json::HasField(value, PHANTASMA_LITERAL("gasProducerRatioMul"), jsonErr) ? json::LookupUInt64(value, PHANTASMA_LITERAL("gasProducerRatioMul"), jsonErr) : (jsonErr = true, 0);
+		out.gasProducerRatioShift = json::HasField(value, PHANTASMA_LITERAL("gasProducerRatioShift"), jsonErr) ? json::LookupUInt32(value, PHANTASMA_LITERAL("gasProducerRatioShift"), jsonErr) : (jsonErr = true, 0);
+		out.gasDappRatioMul = json::HasField(value, PHANTASMA_LITERAL("gasDappRatioMul"), jsonErr) ? json::LookupUInt64(value, PHANTASMA_LITERAL("gasDappRatioMul"), jsonErr) : (jsonErr = true, 0);
+		out.gasDappRatioShift = json::HasField(value, PHANTASMA_LITERAL("gasDappRatioShift"), jsonErr) ? json::LookupUInt32(value, PHANTASMA_LITERAL("gasDappRatioShift"), jsonErr) : (jsonErr = true, 0);
+		out.policyFeeCreateTokenBase = json::HasField(value, PHANTASMA_LITERAL("policyFeeCreateTokenBase"), jsonErr) ? json::LookupUInt64(value, PHANTASMA_LITERAL("policyFeeCreateTokenBase"), jsonErr) : (jsonErr = true, 0);
+		out.policyFeeCreateTokenSymbol = json::HasField(value, PHANTASMA_LITERAL("policyFeeCreateTokenSymbol"), jsonErr) ? json::LookupUInt64(value, PHANTASMA_LITERAL("policyFeeCreateTokenSymbol"), jsonErr) : (jsonErr = true, 0);
+		out.policyFeeCreateTokenSeries = json::HasField(value, PHANTASMA_LITERAL("policyFeeCreateTokenSeries"), jsonErr) ? json::LookupUInt64(value, PHANTASMA_LITERAL("policyFeeCreateTokenSeries"), jsonErr) : (jsonErr = true, 0);
+		out.policyFeeRegisterName = json::HasField(value, PHANTASMA_LITERAL("policyFeeRegisterName"), jsonErr) ? json::LookupUInt64(value, PHANTASMA_LITERAL("policyFeeRegisterName"), jsonErr) : (jsonErr = true, 0);
+		out.legacyDataEscrowPerRow = json::HasField(value, PHANTASMA_LITERAL("legacyDataEscrowPerRow"), jsonErr) ? json::LookupUInt64(value, PHANTASMA_LITERAL("legacyDataEscrowPerRow"), jsonErr) : (jsonErr = true, 0);
+	}
+	return out;
+}
+
+PHANTASMA_FUNCTION GasConfigResult PhantasmaJsonAPI::DeserializeGasConfigResult(const JSONValue& value, bool& jsonErr)
+{
+	GasConfigResult out{};
+	out.gasModelVersion = json::LookupUInt32(value, PHANTASMA_LITERAL("gasModelVersion"), jsonErr);
+	out.gasConfig = DeserializeGasConfigData(json::LookupValue(value, PHANTASMA_LITERAL("gasConfig"), jsonErr), jsonErr);
+	out.blockRateTarget = json::LookupUInt32(value, PHANTASMA_LITERAL("blockRateTarget"), jsonErr);
+	out.expiryWindow = json::LookupUInt32(value, PHANTASMA_LITERAL("expiryWindow"), jsonErr);
+	// Absent under gas model v1 (the node omits null fields).
+	out.unitsPerBlockDataByte = json::HasField(value, PHANTASMA_LITERAL("unitsPerBlockDataByte"), jsonErr)
+	                                ? json::LookupUInt32(value, PHANTASMA_LITERAL("unitsPerBlockDataByte"), jsonErr)
+	                                : 0;
+	return out;
 }
 
 PHANTASMA_FUNCTION Event PhantasmaJsonAPI::DeserializeEvent(const JSONValue& value, bool& jsonErr)
@@ -3505,6 +3620,31 @@ PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetChainResponse(const JSONValue&
 	return out_error.code == 0;
 }
 
+// Returns the current on-chain gas configuration and gas model version.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetGasConfigRequest(JSONBuilder& request)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getGasConfig"));
+	AddJsonRpcRequestId(request);
+	json::AddArray(request, PHANTASMA_LITERAL("params"));
+	json::EndObject(request);
+}
+
+PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetGasConfigResponse(const JSONValue& _jsonResponse, GasConfigResult& output, PhantasmaError* pout_err)
+{
+	PhantasmaError err_dummy;
+	PhantasmaError& out_error = pout_err ? *pout_err : err_dummy;
+	JSONValue jsonResponse = PhantasmaJsonAPI::CheckResponse(_jsonResponse, out_error);
+	if( out_error.code )
+		return false;
+	bool jsonErr = false;
+	output = DeserializeGasConfigResult(jsonResponse, jsonErr);
+	if( !out_error.code && jsonErr )
+		out_error.code = PhantasmaError::InvalidJSON;
+	return out_error.code == 0;
+}
+
 // Returns info about the nexus.
 PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetNexusRequest(JSONBuilder& request, bool extended)
 {
@@ -4705,6 +4845,18 @@ PHANTASMA_FUNCTION Chain PhantasmaAPI::GetChain(const Char* name, bool extended,
 	Chain output;
 	if( !out_error || out_error->code == 0 )
 		PhantasmaJsonAPI::ParseGetChainResponse(json::Parse(response), output, out_error);
+	return output;
+}
+
+PHANTASMA_FUNCTION GasConfigResult PhantasmaAPI::GetGasConfig(PhantasmaError* out_error)
+{
+	JSONBuilder request;
+	PhantasmaJsonAPI::MakeGetGasConfigRequest(request);
+	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
+	PhantasmaJsonAPI::UseRequestId(request);
+	GasConfigResult output{};
+	if( !out_error || out_error->code == 0 )
+		PhantasmaJsonAPI::ParseGetGasConfigResponse(json::Parse(response), output, out_error);
 	return output;
 }
 
