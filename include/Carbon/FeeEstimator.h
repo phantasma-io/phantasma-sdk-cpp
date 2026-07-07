@@ -272,6 +272,22 @@ inline Blockchain::GasConfig ToGasConfig(const rpc::GasConfigData& data)
 	return config;
 }
 
+// Converts a completed estimateTransaction response (PhantasmaAPI::EstimateTransaction) into the
+// same NativeFeeEstimate the Tier-1 calculator produces, so wallet code consumes both tiers
+// identically: maxGas/maxData are the recommended ceilings and expectedGasBill is the exact
+// settled bill. Returns false without touching `out` when the estimate reports wouldAbort - an
+// aborted simulation has no recommendations (retry with a higher offer or fall back to the Tier-1
+// estimator). This SDK favors a bool result over exceptions; check it before using `out`.
+inline bool ToFeeEstimate(const rpc::EstimateTransactionResult& result, NativeFeeEstimate& out)
+{
+	if( result.wouldAbort )
+		return false;
+	out.maxGas = result.recommendedMaxGas;
+	out.maxData = result.recommendedMaxData;
+	out.expectedGasBill = result.gasBillKcalBase;
+	return true;
+}
+
 // Envelope size (signed tx bytes as carried in the block) from a serialized unsigned message
 // length and the number of signers. Use with NativeFeeParams::envelopeBytes for exact v2
 // estimates. Witness layout mirrors SignedTxMsg: native TxTypes append bare 64-byte signatures

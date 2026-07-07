@@ -737,6 +737,7 @@ namespace rpc {
 struct Token;
 struct Chain;
 struct GasConfigResult;
+struct EstimateTransactionResult;
 struct Governance;
 struct Leaderboard;
 
@@ -931,6 +932,23 @@ struct GasConfigResult {
 	UInt32 blockRateTarget; // chain block rate target in milliseconds
 	UInt32 expiryWindow; // transaction expiry window in milliseconds
 	UInt32 unitsPerBlockDataByte; // v2 price of block bytes in gas units per byte; 0 under v1
+};
+
+// estimateTransaction response: the exact fee bill of one serialized transaction envelope,
+// computed by dry-running it against current chain state (gas-model-v2 Tier-2). 64-bit amounts
+// arrive as decimal strings on the wire (JSON-number precision) and are parsed to integers here.
+// Amounts are kcal-base atoms of the gas token; escrow amounts are data-token atoms. Service
+// availability (routing, gas model, node budget) surfaces as a standard RPC error, never through
+// this shape. Use Carbon::ToFeeEstimate to obtain the Tier-1 NativeFeeEstimate.
+struct EstimateTransactionResult {
+	bool wouldAbort; // true when the tx would not complete on-chain as submitted; see abortReason
+	String abortReason; // rejection or abort reason when wouldAbort is true; empty otherwise
+	UInt64 gasBillKcalBase; // settled bill incl. minimum-bill floor and maxGas clamp (aborts still pay)
+	UInt64 dataRows; // newly paid storage quanta (dataRows * dataEscrowPerRow == dataEscrowAtoms)
+	UInt64 dataEscrowAtoms; // gross storage escrow paid for grown rows, in data-token atoms
+	UInt64 dataRefundAtoms; // gross storage refunds for shrunk rows, in data-token atoms
+	UInt64 recommendedMaxGas; // bill + 15% margin floored at the chain minimums; 0 when wouldAbort
+	UInt64 recommendedMaxData; // net escrow + 15% margin, row-aligned; 0 when wouldAbort or no escrow
 };
 
 struct Event {
@@ -1357,6 +1375,9 @@ class PhantasmaJsonAPI
 	// chain parameters. Changes only via governance resolutions, so the result is cacheable.
 	static void MakeGetGasConfigRequest(JSONBuilder&);
 	static bool ParseGetGasConfigResponse(const JSONValue&, GasConfigResult& out, PhantasmaError* err = 0);
+	// Dry-runs a serialized transaction envelope for its exact fee bill (gas-model-v2 Tier-2).
+	static void MakeEstimateTransactionRequest(JSONBuilder&, const Char* txData);
+	static bool ParseEstimateTransactionResponse(const JSONValue&, EstimateTransactionResult& out, PhantasmaError* err = 0);
 	// Returns info about the nexus.
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default nexus object.
 	static void MakeGetNexusRequest(JSONBuilder&, bool extended);
@@ -1473,6 +1494,7 @@ class PhantasmaJsonAPI
 	static Chain DeserializeChain(const JSONValue& json, bool& jsonError);
 	static GasConfigData DeserializeGasConfigData(const JSONValue& json, bool& jsonError);
 	static GasConfigResult DeserializeGasConfigResult(const JSONValue& json, bool& jsonError);
+	static EstimateTransactionResult DeserializeEstimateTransactionResult(const JSONValue& json, bool& jsonError);
 	static Event DeserializeEvent(const JSONValue& json, bool& jsonError);
 	static EventExtended DeserializeEventExtended(const JSONValue& json, bool& jsonError);
 	static TokenCreateData DeserializeTokenCreateData(const JSONValue& json, bool& jsonError);
@@ -1566,6 +1588,13 @@ class PhantasmaAPI
 	// Returns the current on-chain gas configuration, gas model version and fee-estimation
 	// chain parameters. Changes only via governance resolutions, so the result is cacheable.
 	GasConfigResult GetGasConfig(PhantasmaError* out_error = nullptr);
+	// Dry-runs a serialized transaction envelope against current chain state and returns its exact
+	// fee bill with recommended maxGas/maxData ceilings (gas-model-v2 Tier-2 estimate). Signatures
+	// inside the envelope may be zero-filled dummies of the correct length - the simulation skips
+	// signature checks, and dummies preserve the exact envelope byte length the bill depends on.
+	// Until the estimate service is launched this returns a standard RPC error; use
+	// Carbon::EstimateNativeFee with GetGasConfig as the fallback.
+	EstimateTransactionResult EstimateTransaction(const Char* txData, PhantasmaError* out_error = nullptr);
 	// Returns info about the nexus.
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default nexus object.
 	Nexus GetNexus(bool extended, PhantasmaError* out_error = nullptr);
@@ -2032,6 +2061,24 @@ PHANTASMA_FUNCTION GasConfigResult PhantasmaJsonAPI::DeserializeGasConfigResult(
 	out.unitsPerBlockDataByte = json::HasField(value, PHANTASMA_LITERAL("unitsPerBlockDataByte"), jsonErr)
 	                                ? json::LookupUInt32(value, PHANTASMA_LITERAL("unitsPerBlockDataByte"), jsonErr)
 	                                : 0;
+	return out;
+}
+
+PHANTASMA_FUNCTION EstimateTransactionResult PhantasmaJsonAPI::DeserializeEstimateTransactionResult(const JSONValue& value, bool& jsonErr)
+{
+	EstimateTransactionResult out{};
+	out.wouldAbort = json::LookupBool(value, PHANTASMA_LITERAL("wouldAbort"), jsonErr);
+	// The node always serializes abortReason (empty string on the happy path); tolerate absence.
+	out.abortReason = json::HasField(value, PHANTASMA_LITERAL("abortReason"), jsonErr)
+	                      ? json::LookupString(value, PHANTASMA_LITERAL("abortReason"), jsonErr)
+	                      : String{};
+	// All amounts ride as decimal strings and are always present in the response.
+	out.gasBillKcalBase = json::LookupUInt64(value, PHANTASMA_LITERAL("gasBillKcalBase"), jsonErr);
+	out.dataRows = json::LookupUInt64(value, PHANTASMA_LITERAL("dataRows"), jsonErr);
+	out.dataEscrowAtoms = json::LookupUInt64(value, PHANTASMA_LITERAL("dataEscrowAtoms"), jsonErr);
+	out.dataRefundAtoms = json::LookupUInt64(value, PHANTASMA_LITERAL("dataRefundAtoms"), jsonErr);
+	out.recommendedMaxGas = json::LookupUInt64(value, PHANTASMA_LITERAL("recommendedMaxGas"), jsonErr);
+	out.recommendedMaxData = json::LookupUInt64(value, PHANTASMA_LITERAL("recommendedMaxData"), jsonErr);
 	return out;
 }
 
@@ -3645,6 +3692,30 @@ PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetGasConfigResponse(const JSONVa
 	return out_error.code == 0;
 }
 
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeEstimateTransactionRequest(JSONBuilder& request, const Char* txData)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("estimateTransaction"));
+	AddJsonRpcRequestId(request);
+	json::AddArray(request, PHANTASMA_LITERAL("params"), txData);
+	json::EndObject(request);
+}
+
+PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseEstimateTransactionResponse(const JSONValue& _jsonResponse, EstimateTransactionResult& output, PhantasmaError* pout_err)
+{
+	PhantasmaError err_dummy;
+	PhantasmaError& out_error = pout_err ? *pout_err : err_dummy;
+	JSONValue jsonResponse = PhantasmaJsonAPI::CheckResponse(_jsonResponse, out_error);
+	if( out_error.code )
+		return false;
+	bool jsonErr = false;
+	output = DeserializeEstimateTransactionResult(jsonResponse, jsonErr);
+	if( !out_error.code && jsonErr )
+		out_error.code = PhantasmaError::InvalidJSON;
+	return out_error.code == 0;
+}
+
 // Returns info about the nexus.
 PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetNexusRequest(JSONBuilder& request, bool extended)
 {
@@ -4857,6 +4928,18 @@ PHANTASMA_FUNCTION GasConfigResult PhantasmaAPI::GetGasConfig(PhantasmaError* ou
 	GasConfigResult output{};
 	if( !out_error || out_error->code == 0 )
 		PhantasmaJsonAPI::ParseGetGasConfigResponse(json::Parse(response), output, out_error);
+	return output;
+}
+
+PHANTASMA_FUNCTION EstimateTransactionResult PhantasmaAPI::EstimateTransaction(const Char* txData, PhantasmaError* out_error)
+{
+	JSONBuilder request;
+	PhantasmaJsonAPI::MakeEstimateTransactionRequest(request, txData);
+	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
+	PhantasmaJsonAPI::UseRequestId(request);
+	EstimateTransactionResult output{};
+	if( !out_error || out_error->code == 0 )
+		PhantasmaJsonAPI::ParseEstimateTransactionResponse(json::Parse(response), output, out_error);
 	return output;
 }
 

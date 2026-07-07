@@ -286,6 +286,38 @@ void RunGasConfigFeeTests(TestContext& ctx)
 		        config.policyFeeRegisterName == 100000000000000000ull && config.legacyDataEscrowPerRow == 2,
 		    "ToGasConfig maps the JSON model to the wire struct");
 	}
+
+	// A completed estimateTransaction response converts into the Tier-1 NativeFeeEstimate so
+	// wallet code consumes both tiers identically. recommendedMaxGas > 2^53 exercises 64-bit carry.
+	{
+		rpc::EstimateTransactionResult result{};
+		result.wouldAbort = false;
+		result.gasBillKcalBase = 10000000;
+		result.dataRows = 1;
+		result.dataEscrowAtoms = 200000;
+		result.recommendedMaxGas = 100000000000000000ull; // > 2^53
+		result.recommendedMaxData = 400000;
+		NativeFeeEstimate estimate{};
+		const bool ok = ToFeeEstimate(result, estimate);
+		Report(ctx,
+		    ok && estimate.maxGas == 100000000000000000ull && estimate.maxData == 400000 &&
+		        estimate.expectedGasBill == 10000000,
+		    "ToFeeEstimate maps a completed estimate to the Tier-1 struct");
+	}
+
+	// An aborted estimate has no recommendations; the converter must refuse rather than hand back
+	// zero ceilings a wallet could sign with.
+	{
+		rpc::EstimateTransactionResult result{};
+		result.wouldAbort = true;
+		result.abortReason = PHANTASMA_LITERAL("gas fees [gas=3125 max=40]");
+		result.gasBillKcalBase = 40; // aborts still settle a bill, but the ceilings are unknown
+		NativeFeeEstimate estimate{};
+		const bool ok = ToFeeEstimate(result, estimate);
+		Report(ctx,
+		    !ok && estimate.maxGas == 0 && estimate.maxData == 0,
+		    "ToFeeEstimate refuses an aborted estimate");
+	}
 }
 
 } // namespace testcases
