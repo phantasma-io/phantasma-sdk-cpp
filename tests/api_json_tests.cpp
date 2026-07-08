@@ -106,6 +106,26 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		Report(ctx, ok && err.code == 0 && height == 12345, "API GetBlockHeight parser accepts quoted numeric");
 	}
 	{
+		// The Block DTO carries the optional gas-model-v2 producerAddress. A pre-v2 block omits the
+		// key -> empty string with no parse error; producerAddress is distinct in meaning from
+		// validatorAddress (the consensus-log leader).
+		rpc::PhantasmaError err{};
+		rpc::Block block{};
+		const JSONDocument doc = R"({"id":"1","result":{"hash":"H","previousHash":"P","timestamp":1,"height":2,"chainAddress":"C","protocol":3,"validatorAddress":"Pvalidator","reward":"0","txs":[]}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetBlockByHeightResponse(json::Parse(doc), block, &err);
+		Report(ctx, ok && err.code == 0 && block.validatorAddress == "Pvalidator" && block.producerAddress.empty(),
+		    "API GetBlockByHeight parser leaves producerAddress empty on pre-v2 blocks");
+	}
+	{
+		// Gas-model-v2 block: producerAddress is present and surfaces verbatim.
+		rpc::PhantasmaError err{};
+		rpc::Block block{};
+		const JSONDocument doc = R"({"id":"1","result":{"hash":"H","previousHash":"P","timestamp":1,"height":2,"chainAddress":"C","protocol":3,"validatorAddress":"Pvalidator","producerAddress":"Pproducer","reward":"0","txs":[]}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetBlockByHeightResponse(json::Parse(doc), block, &err);
+		Report(ctx, ok && err.code == 0 && block.producerAddress == "Pproducer",
+		    "API GetBlockByHeight parser surfaces producerAddress on gas-model-v2 blocks");
+	}
+	{
 		// Generated request builders must not reuse one fixed id, and parser
 		// validation must use the id carried by the request being parsed.
 		JSONBuilder firstRequest;

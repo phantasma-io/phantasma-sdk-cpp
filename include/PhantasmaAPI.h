@@ -1108,6 +1108,11 @@ struct Block {
 	UInt32 protocol; //
 	PHANTASMA_VECTOR<Transaction> txs; //
 	String validatorAddress; //
+	// Fee payout address stamped by the block producer inside the hashed block input. Non-empty on
+	// gas-model-v2 blocks, empty on earlier blocks (the JSON key is omitted). Distinct from
+	// validatorAddress (the consensus-log leader): usually equal today, but a configurable payout
+	// address is a planned compatible extension, so consumers must not assume equality.
+	String producerAddress; //
 	String reward; //
 	PHANTASMA_VECTOR<Event> events; //
 	PHANTASMA_VECTOR<Oracle> oracles; //
@@ -2539,6 +2544,9 @@ PHANTASMA_FUNCTION Block PhantasmaJsonAPI::DeserializeBlock(const JSONValue& val
 		json::LookupUInt32(value, PHANTASMA_LITERAL("protocol"), jsonErr),
 		txsVector,
 		json::LookupString(value, PHANTASMA_LITERAL("validatorAddress"), jsonErr),
+		// producerAddress is optional (gas-model-v2 only): guard with HasField so a pre-v2 block,
+		// which omits the key, yields an empty string instead of tripping the LookupString error.
+		json::HasField(value, PHANTASMA_LITERAL("producerAddress"), jsonErr) ? json::LookupString(value, PHANTASMA_LITERAL("producerAddress"), jsonErr) : String(PHANTASMA_LITERAL("")),
 		json::LookupString(value, PHANTASMA_LITERAL("reward"), jsonErr),
 		eventsVector,
 		oraclesVector
