@@ -5,6 +5,8 @@
    but you are responsible for sending/receiving these messages via HTTP on your own.
    You can call `PhantasmaJsonAPI::Uri()` to determine where to send them.
 
+     void PhantasmaJsonAPI::MakeGetAccountInfoRequest(JSONBuilder, account);
+     bool PhantasmaJsonAPI::ParseGetAccountInfoResponse(JSONValue, AccountInfo);
      void PhantasmaJsonAPI::MakeGetAccountRequest(JSONBuilder, addressText);
      bool PhantasmaJsonAPI::ParseGetAccountResponse(JSONValue, Account);
      void PhantasmaJsonAPI::MakeGetAccountsRequest(JSONBuilder, accountText, extended, checkAddressReservedByte);
@@ -108,6 +110,7 @@
    internal JSON messaging.
 
      PhantasmaAPI phantasmaAPI(httpClient);
+     AccountInfo = phantasmaAPI.GetAccountInfo(account, error);
      Account = phantasmaAPI.GetAccount(addressText, error);
      vector<Account> = phantasmaAPI.GetAccounts(accountText, extended, checkAddressReservedByte, error);
      String = phantasmaAPI.LookUpName(name, error);

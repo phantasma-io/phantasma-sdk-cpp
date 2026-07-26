@@ -404,6 +404,31 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		    !ok && err.code == rpc::PhantasmaError::InvalidJSON,
 		    "API GetOrganizationMember parser rejects negative memberTime");
 	}
+	{
+		JSONBuilder request;
+		rpc::PhantasmaJsonAPI::MakeGetAccountInfoRequest(request, "P2Kaccount");
+		ReportJsonRpcRequest(
+		    ctx,
+		    request,
+		    "getAccountInfo",
+		    "[\"P2Kaccount\"]",
+		    "API GetAccountInfo builder sends only the account");
+	}
+	{
+		// getAccountInfo names the staking object "stake", while getAccount carries the same object
+		// under "stakes" and uses "stake" for a deprecated flat scalar. Binding the wrong key would
+		// yield a zeroed stake instead of failing, so the exact wire shape is pinned here.
+		rpc::PhantasmaError err{};
+		rpc::AccountInfo info{};
+		const JSONDocument doc =
+		    R"({"id":"1","result":{"address":"P2Kaccount","name":"myname","stake":{"amount":"1500000000000","time":1743520000,"unclaimed":"42000000000"}}})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetAccountInfoResponse(json::Parse(doc), info, &err);
+		Report(ctx,
+		    ok && err.code == 0 && info.address == "P2Kaccount" && info.name == "myname" &&
+		        info.stake.amount == "1500000000000" && info.stake.time == 1743520000 &&
+		        info.stake.unclaimed == "42000000000",
+		    "API GetAccountInfo parser reads the stake object");
+	}
 }
 
 } // namespace testcases

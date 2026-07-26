@@ -10,6 +10,8 @@
 //   but you are responsible for sending/receiving these messages via HTTP on your own.
 //   You can call `PhantasmaJsonAPI::Uri()` to determine where to send them.
 //
+//     void PhantasmaJsonAPI::MakeGetAccountInfoRequest(JSONBuilder, account);
+//     bool PhantasmaJsonAPI::ParseGetAccountInfoResponse(JSONValue, AccountInfo);
 //     void PhantasmaJsonAPI::MakeGetAccountRequest(JSONBuilder, account);
 //     bool PhantasmaJsonAPI::ParseGetAccountResponse(JSONValue, Account);
 //     void PhantasmaJsonAPI::MakeGetAccountsRequest(JSONBuilder, accountText, extended, checkAddressReservedByte);
@@ -115,6 +117,7 @@
 //   internal JSON messaging.
 //
 //     PhantasmaAPI phantasmaAPI(httpClient);
+//     AccountInfo = phantasmaAPI.GetAccountInfo(account, error);
 //     Account = phantasmaAPI.GetAccount(account, error);
 //     vector<Account> = phantasmaAPI.GetAccounts(accountText, extended, checkAddressReservedByte, error);
 //     String = phantasmaAPI.LookUpName(name, error);
@@ -848,6 +851,18 @@ struct Storage {
 	PHANTASMA_VECTOR<Archive> archives; //
 };
 
+// Lightweight account overview returned by getAccountInfo. Carries no balances and no NFT id
+// lists, so fetching it costs the same regardless of how much an address holds - unlike Account,
+// whose balances[].ids embed every owned NFT id and are capped server-side at 10000 entries per
+// token. Balances and NFTs are fetched separately through the cursor-paginated account endpoints.
+// Note the wire name of the staking object differs from Account, which carries the same object
+// under "stakes" and uses "stake" for a deprecated flat scalar.
+struct AccountInfo {
+	String address; //
+	String name; //
+	Stake stake; //
+};
+
 struct Account {
 	String address; //
 	String name; //
@@ -1323,6 +1338,9 @@ class PhantasmaJsonAPI
 	static void UseRequestId(const JSONBuilder& request);
 	static void UseRequestId(const Char* requestId);
 
+	// Returns the account name and staking info of given address, without balances or NFT id lists.
+	static void MakeGetAccountInfoRequest(JSONBuilder&, const Char* account);
+	static bool ParseGetAccountInfoResponse(const JSONValue&, AccountInfo& out, PhantasmaError* err = 0);
 	// Returns the account name and balance of given address.
 	static void MakeGetAccountRequest(JSONBuilder&, const Char* account);
 	static bool ParseGetAccountResponse(const JSONValue&, Account& out, PhantasmaError* err = 0);
@@ -1492,6 +1510,7 @@ class PhantasmaJsonAPI
 	static Nexus DeserializeNexus(const JSONValue& json, bool& jsonError);
 	static Stake DeserializeStake(const JSONValue& json, bool& jsonError);
 	static Storage DeserializeStorage(const JSONValue& json, bool& jsonError);
+	static AccountInfo DeserializeAccountInfo(const JSONValue& json, bool& jsonError);
 	static Account DeserializeAccount(const JSONValue& json, bool& jsonError);
 	static LeaderboardRow DeserializeLeaderboardRow(const JSONValue& json, bool& jsonError);
 	static Leaderboard DeserializeLeaderboard(const JSONValue& json, bool& jsonError);
@@ -1554,6 +1573,10 @@ class PhantasmaAPI
 	    : m_httpClient(client)
 	{}
 
+	// Returns the account name and staking info of given address. Cost is independent of how much
+	// the address holds, which makes this the call to use in wallet refresh loops; balances and NFTs
+	// are fetched separately through the cursor-paginated account endpoints.
+	AccountInfo GetAccountInfo(const Char* account, PhantasmaError* out_error = nullptr);
 	// Returns the account name and balance of given address.
 	Account GetAccount(const Char* account, PhantasmaError* out_error = nullptr);
 	// Returns data about several accounts.
@@ -1901,6 +1924,15 @@ PHANTASMA_FUNCTION Storage PhantasmaJsonAPI::DeserializeStorage(const JSONValue&
 		json::LookupUInt32(value, PHANTASMA_LITERAL("used"), jsonErr),
 		json::LookupString(value, PHANTASMA_LITERAL("avatar"), jsonErr),
 		archivesVector
+	};
+}
+
+PHANTASMA_FUNCTION AccountInfo PhantasmaJsonAPI::DeserializeAccountInfo(const JSONValue& value, bool& jsonErr)
+{
+	return AccountInfo{
+		json::LookupString(value, PHANTASMA_LITERAL("address"), jsonErr),
+		json::LookupString(value, PHANTASMA_LITERAL("name"), jsonErr),
+		DeserializeStake(json::LookupValue(value, PHANTASMA_LITERAL("stake"), jsonErr), jsonErr)
 	};
 }
 
@@ -3219,6 +3251,31 @@ PHANTASMA_FUNCTION JSONValue PhantasmaJsonAPI::CheckResponse(JSONValue response,
 	}
 
 	return result;
+}
+
+// Returns the account name and staking info of given address.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountInfoRequest(JSONBuilder& request, const Char* account)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getAccountInfo"));
+	AddJsonRpcRequestId(request);
+	json::AddArray(request, PHANTASMA_LITERAL("params"), account);
+	json::EndObject(request);
+}
+
+PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetAccountInfoResponse(const JSONValue& _jsonResponse, AccountInfo& output, PhantasmaError* pout_err)
+{
+	PhantasmaError err_dummy;
+	PhantasmaError& out_error = pout_err ? *pout_err : err_dummy;
+	JSONValue jsonResponse = PhantasmaJsonAPI::CheckResponse(_jsonResponse, out_error);
+	if( out_error.code )
+		return false;
+	bool jsonErr = false;
+	output = DeserializeAccountInfo(jsonResponse, jsonErr);
+	if( !out_error.code && jsonErr )
+		out_error.code = PhantasmaError::InvalidJSON;
+	return out_error.code == 0;
 }
 
 // Returns the account name and balance of given address.
@@ -4705,6 +4762,18 @@ PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetPhantasmaVmConfigResponse(cons
 }
 
 #if defined(PHANTASMA_HTTPCLIENT)
+
+PHANTASMA_FUNCTION AccountInfo PhantasmaAPI::GetAccountInfo(const Char* account, PhantasmaError* out_error)
+{
+	JSONBuilder request;
+	PhantasmaJsonAPI::MakeGetAccountInfoRequest(request, account);
+	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
+	PhantasmaJsonAPI::UseRequestId(request);
+	AccountInfo output;
+	if( !out_error || out_error->code == 0 )
+		PhantasmaJsonAPI::ParseGetAccountInfoResponse(json::Parse(response), output, out_error);
+	return output;
+}
 
 PHANTASMA_FUNCTION Account PhantasmaAPI::GetAccount(const Char* account, PhantasmaError* out_error)
 {
