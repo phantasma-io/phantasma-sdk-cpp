@@ -1342,6 +1342,8 @@ class PhantasmaJsonAPI
 	static void MakeGetAccountInfoRequest(JSONBuilder&, const Char* account);
 	static bool ParseGetAccountInfoResponse(const JSONValue&, AccountInfo& out, PhantasmaError* err = 0);
 	// Returns the account name and balance of given address.
+	// Deprecated: the response embeds every owned NFT id (capped at 10000 per token while amount
+	// keeps the true count); prefer MakeGetAccountInfoRequest with the cursor-paginated endpoints.
 	static void MakeGetAccountRequest(JSONBuilder&, const Char* account);
 	static bool ParseGetAccountResponse(const JSONValue&, Account& out, PhantasmaError* err = 0);
 	// Returns data about several accounts.
@@ -1578,8 +1580,10 @@ class PhantasmaAPI
 	// are fetched separately through the cursor-paginated account endpoints.
 	AccountInfo GetAccountInfo(const Char* account, PhantasmaError* out_error = nullptr);
 	// Returns the account name and balance of given address.
+	[[deprecated("getAccount embeds every owned NFT id (capped at 10000 per token while amount keeps the true count); use GetAccountInfo with GetAccountFungibleTokens/GetAccountNFTs")]]
 	Account GetAccount(const Char* account, PhantasmaError* out_error = nullptr);
 	// Returns data about several accounts.
+	[[deprecated("getAccounts embeds every owned NFT id (capped at 10000 per token while amount keeps the true count); use GetAccountInfo with GetAccountFungibleTokens/GetAccountNFTs")]]
 	PHANTASMA_VECTOR<Account> GetAccounts(const Char* accountText, bool extended, bool checkAddressReservedByte, PhantasmaError* out_error = nullptr);
 	// Returns the address that owns a given name.
 	String LookUpName(const Char* name, PhantasmaError* out_error = nullptr);

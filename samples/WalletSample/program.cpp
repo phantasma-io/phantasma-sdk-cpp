@@ -131,7 +131,8 @@ class Program
 	HttpClient _http;
 	rpc::PhantasmaAPI _phantasmaApiService;
 
-	rpc::Account _account;
+	rpc::AccountInfo _accountInfo;
+	vector<rpc::Balance> _balances;
 	PhantasmaKeys _key;
 	vector<rpc::Chain> _chains;
 	vector<rpc::Token> _tokens;
@@ -219,7 +220,8 @@ class Program
 				break;
 			case 8:
 				logout = true;
-				_account = rpc::Account();
+				_accountInfo = rpc::AccountInfo();
+				_balances.clear();
 				break;
 			}
 
@@ -236,14 +238,38 @@ class Program
 		}
 	}
 
+	// The node caps the legacy getAccount id lists and grows that response with account size, so the
+	// overview and the balances are fetched separately: getAccountInfo is O(1), and balances arrive
+	// one bounded page at a time (the node accepts pageSize 1..100).
+	void RefreshAccount()
+	{
+		const String address = _key.GetAddress().ToString();
+		_accountInfo = _phantasmaApiService.GetAccountInfo(address.c_str());
+
+		_balances.clear();
+		String cursor;
+		for( ;; )
+		{
+			rpc::PhantasmaError error;
+			const auto page = _phantasmaApiService.GetAccountFungibleTokens(
+			    address.c_str(), PHANTASMA_LITERAL(""), 0, 100, cursor.c_str(), true, &error);
+			if( error.code )
+				break;
+			_balances.insert(_balances.end(), page.result.begin(), page.result.end());
+			if( page.cursor.empty() )
+				break;
+			cursor = page.cursor;
+		}
+	}
+
 	void ShowBalance(bool detailed = false)
 	{
-		_account = _phantasmaApiService.GetAccount(_key.GetAddress().ToString().c_str());
-		const auto& name = _account.name;
+		RefreshAccount();
+		const auto& name = _accountInfo.name;
 		WriteLine();
 		WriteLine("Address Name: ", name.c_str());
 		WriteLine();
-		if( _account.balances.empty() )
+		if( _balances.empty() )
 		{
 			WriteLine("No funds");
 		}
@@ -251,7 +277,7 @@ class Program
 		{
 			if( _tokens.empty() )
 				_tokens = _phantasmaApiService.GetTokens(true);
-			for( const auto& balanceSheet : _account.balances )
+			for( const auto& balanceSheet : _balances )
 			{
 				WriteLine("********************");
 				WriteLine("Token: ", balanceSheet.symbol.c_str());
@@ -332,7 +358,7 @@ class Program
 
 	bool HaveTokenBalanceToTransfer()
 	{
-		for( const auto& token : _account.balances )
+		for( const auto& token : _balances )
 			if( BigInteger::Parse(token.amount) > BigInteger::Zero() )
 				return true;
 		return false;
@@ -393,8 +419,8 @@ class Program
 
 	void CrossChainTransfer()
 	{
-		if( _account.address.empty() )
-			_account = _phantasmaApiService.GetAccount(_key.GetAddress().ToString().c_str());
+		if( _accountInfo.address.empty() )
+			RefreshAccount();
 		if( !HaveTokenBalanceToTransfer() )
 		{
 			WriteLine("No tokens to transfer");
@@ -403,19 +429,19 @@ class Program
 
 		WriteLine("Select token and chain: ");
 
-		for( size_t i = 0; i < _account.balances.size(); ++i )
+		for( size_t i = 0; i < _balances.size(); ++i )
 		{
-			WriteLine(i + 1, " - ", _account.balances[i].symbol, " in ", _account.balances[i].chain, " chain");
+			WriteLine(i + 1, " - ", _balances[i].symbol, " in ", _balances[i].chain, " chain");
 		}
 
 		const int selectedTokenOption = std::stoi(ReadLine());
-		if( selectedTokenOption < 1 || static_cast<size_t>(selectedTokenOption) > _account.balances.size() )
+		if( selectedTokenOption < 1 || static_cast<size_t>(selectedTokenOption) > _balances.size() )
 		{
 			WriteLine("Invalid selection");
 			return;
 		}
 		const size_t selectedTokenIndex = static_cast<size_t>(selectedTokenOption - 1);
-		const auto& token = _account.balances[selectedTokenIndex];
+		const auto& token = _balances[selectedTokenIndex];
 
 		// WriteLine("Select destination chain:");
 
@@ -449,9 +475,9 @@ class Program
 
 	void CarbonTransfer()
 	{
-		if( _account.address.empty() )
+		if( _accountInfo.address.empty() )
 		{
-			_account = _phantasmaApiService.GetAccount(_key.GetAddress().ToString().c_str());
+			RefreshAccount();
 		}
 		if( !HaveTokenBalanceToTransfer() )
 		{
@@ -460,19 +486,19 @@ class Program
 		}
 
 		WriteLine("Select token for Carbon transfer: ");
-		for( size_t i = 0; i < _account.balances.size(); ++i )
+		for( size_t i = 0; i < _balances.size(); ++i )
 		{
-			WriteLine(i + 1, " - ", _account.balances[i].symbol, " in ", _account.balances[i].chain, " chain");
+			WriteLine(i + 1, " - ", _balances[i].symbol, " in ", _balances[i].chain, " chain");
 		}
 
 		const int selectedTokenOption = std::stoi(ReadLine());
-		if( selectedTokenOption < 1 || static_cast<size_t>(selectedTokenOption) > _account.balances.size() )
+		if( selectedTokenOption < 1 || static_cast<size_t>(selectedTokenOption) > _balances.size() )
 		{
 			WriteLine("Invalid selection");
 			return;
 		}
 		const size_t selectedTokenIndex = static_cast<size_t>(selectedTokenOption - 1);
-		const auto& token = _account.balances[selectedTokenIndex];
+		const auto& token = _balances[selectedTokenIndex];
 
 		uint64_t carbonTokenId = 0;
 		if( !TryGetCarbonTokenId(token.symbol, carbonTokenId) )

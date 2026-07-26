@@ -24,15 +24,28 @@ int main()
 	const char* wif = "NztsEZP7dtrzRBagogUYVp6mgEFbhjZfvHMVkd2bYWJfE";
 
 	PhantasmaError error;
-	Account account = phantasmaAPI.GetAccount(wif, &error);
+	// The account overview costs the same regardless of how much the address holds; balances are
+	// fetched separately, one bounded page at a time (the node accepts pageSize 1..100).
+	AccountInfo account = phantasmaAPI.GetAccountInfo(wif, &error);
 
 	if( !error.code )
 	{
 		std::cout << "Balance description for address " << wif << std::endl;
+		std::cout << "Name: " << account.name << ", staked: " << account.stake.amount << std::endl;
 
-		for( int i = 0; i < account.balances.size(); i++ )
+		String cursor;
+		for( ;; )
 		{
-			std::cout << account.balances[i].amount << " " << account.balances[i].symbol << " tokens available on " << account.balances[i].chain << " chain" << std::endl;
+			const auto page = phantasmaAPI.GetAccountFungibleTokens(wif, "", 0, 100, cursor.c_str(), true, &error);
+			if( error.code )
+				break;
+			for( size_t i = 0; i < page.result.size(); i++ )
+			{
+				std::cout << page.result[i].amount << " " << page.result[i].symbol << " tokens available on " << page.result[i].chain << " chain" << std::endl;
+			}
+			if( page.cursor.empty() )
+				break;
+			cursor = page.cursor;
 		}
 	}
 	else
