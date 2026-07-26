@@ -1643,8 +1643,10 @@ class PhantasmaAPI
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default leaderboard object.
 	Leaderboard GetLeaderboard(const Char* name, PhantasmaError* out_error = nullptr);
 	// Returns an array of tokens deployed in Phantasma.
+	// The extended flag is deprecated server-side and slated for removal.
 	PHANTASMA_VECTOR<Token> GetTokens(bool extended, PhantasmaError* out_error = nullptr);
 	// Returns an array of tokens deployed in Phantasma filtered by owner address.
+	// The extended flag is deprecated server-side and slated for removal.
 	PHANTASMA_VECTOR<Token> GetTokens(bool extended, const Char* ownerAddress, PhantasmaError* out_error = nullptr);
 	// Returns info about a specific token deployed in Phantasma.
 	Token GetToken(const Char* symbol, bool extended, PhantasmaError* out_error = nullptr);
@@ -1657,6 +1659,9 @@ class PhantasmaAPI
 	// Returns an array of NFTs for a token (cursor pagination).
 	CursorPaginatedResult<TokenData> GetTokenNFTs(UInt64 carbonTokenId, UInt32 carbonSeriesId, UInt32 pageSize, const Char* cursor, bool extended, PhantasmaError* out_error = nullptr);
 	// Returns data of a non-fungible token, in hexadecimal format.
+	// Deprecated: the node serves this as a strict subset of getNFT - same response, with property
+	// loading forced off - so GetNFT covers it entirely.
+	[[deprecated("getTokenData is a strict subset of getNFT; use GetNFT")]]
 	TokenData GetTokenData(const Char* symbol, const Char* IDtext, PhantasmaError* out_error = nullptr);
 	// Returns data of a non-fungible token, in hexadecimal format.
 	TokenData GetNFT(const Char* symbol, const Char* IDtext, bool extended, PhantasmaError* out_error = nullptr);
@@ -1690,6 +1695,7 @@ class PhantasmaAPI
 	// Returns the ABI interface of specific contract.
 	Contract GetContract(const Char* chainAddressOrName, const Char* contractName, PhantasmaError* out_error = nullptr);
 	// Returns the ABI interface of specific contract (list).
+	// The extended flag is deprecated server-side and slated for removal.
 	PHANTASMA_VECTOR<Contract> GetContracts(const Char* chainAddressOrName, bool extended, PhantasmaError* out_error = nullptr);
 	// Returns the ABI interface of specific contract by address.
 	Contract GetContractByAddress(const Char* chainAddressOrName, const Char* contractAddress, PhantasmaError* out_error = nullptr);

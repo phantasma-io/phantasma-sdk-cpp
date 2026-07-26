@@ -348,7 +348,7 @@ class Program
 
 				for( const auto& id : balanceSheet.ids )
 				{
-					const auto& tokenData = _phantasmaApiService.GetTokenData(balanceSheet.symbol.c_str(), id.c_str());
+					const auto& tokenData = _phantasmaApiService.GetNFT(balanceSheet.symbol.c_str(), id.c_str(), false);
 					WriteLine("\tID: ", tokenData.id.c_str(), " - RAM: ", tokenData.ram.c_str(), " ROM: ", tokenData.rom.c_str());
 				}
 				WriteLine();
