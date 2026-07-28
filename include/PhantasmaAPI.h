@@ -688,6 +688,37 @@ struct JSONBuilder // A VERY simple json string builder. Highly recommended that
 		AddValues(args...);
 		s << ']';
 	}
+	// Writes key: [[values...]] (+ optional trailing scalars). Batch endpoints (getAccountInfos)
+	// take their address list as a NESTED json array inside params, which the scalar-only
+	// AddValues path above cannot express.
+	void AddNestedStrings(const String* values, int count)
+	{
+		s << '[';
+		for( int i = 0; i < count; ++i )
+		{
+			if( i )
+				s << ", ";
+			s << '"' << values[i] << '"';
+		}
+		s << ']';
+	}
+	void AddArrayWithNestedStringArray(const Char* key, const String* values, int count)
+	{
+		AddKey(key);
+		s << '[';
+		AddNestedStrings(values, count);
+		s << ']';
+	}
+	template<class... Args>
+	void AddArrayWithNestedStringArray(const Char* key, const String* values, int count, Args... args)
+	{
+		AddKey(key);
+		s << '[';
+		AddNestedStrings(values, count);
+		s << ", ";
+		AddValues(args...);
+		s << ']';
+	}
 	void EndObject() { s << "}"; }
 };
 #endif
@@ -729,6 +760,10 @@ void BeginObject(JSONBuilder&);
 void AddString(JSONBuilder&, const Char* key, const Char* value);
 template<class... Args>
 void AddArray(JSONBuilder&, const Char* key, Args... args);
+// Writes key: [[values...], args...] - a nested string array as the first params element, used by
+// batch endpoints (getAccountInfos). Only instantiated when those endpoints are called.
+template<class... Args>
+void AddArrayWithNestedStringArray(JSONBuilder&, const Char* key, const String* values, int count, Args... args);
 void EndObject(JSONBuilder&);
 #endif
 } // namespace json
@@ -1341,6 +1376,13 @@ class PhantasmaJsonAPI
 	// Returns the account name and staking info of given address, without balances or NFT id lists.
 	static void MakeGetAccountInfoRequest(JSONBuilder&, const Char* account);
 	static bool ParseGetAccountInfoResponse(const JSONValue&, AccountInfo& out, PhantasmaError* err = 0);
+	// Returns account overviews for a batch of up to 100 addresses in one call - the batch
+	// counterpart of getAccountInfo with the same per-account record. The node answers every
+	// address from a single state snapshot and returns results in request order; the addresses
+	// travel as a native JSON array parameter and a malformed address rejects the whole batch.
+	static void MakeGetAccountInfosRequest(JSONBuilder&, const String* addresses, int addressCount);
+	static void MakeGetAccountInfosRequest(JSONBuilder&, const String* addresses, int addressCount, bool checkAddressReservedByte, const Char* addressType);
+	static bool ParseGetAccountInfosResponse(const JSONValue&, PHANTASMA_VECTOR<AccountInfo>& out, PhantasmaError* err = 0);
 	// Returns the account name and balance of given address.
 	// Deprecated: the response embeds every owned NFT id (capped at 10000 per token while amount
 	// keeps the true count); prefer MakeGetAccountInfoRequest with the cursor-paginated endpoints.
@@ -1579,6 +1621,7 @@ class PhantasmaAPI
 	// the address holds, which makes this the call to use in wallet refresh loops; balances and NFTs
 	// are fetched separately through the cursor-paginated account endpoints.
 	AccountInfo GetAccountInfo(const Char* account, PhantasmaError* out_error = nullptr);
+	PHANTASMA_VECTOR<AccountInfo> GetAccountInfos(const String* addresses, int addressCount, PhantasmaError* out_error = nullptr);
 	// Returns the account name and balance of given address.
 	[[deprecated("getAccount embeds every owned NFT id (capped at 10000 per token while amount keeps the true count); use GetAccountInfo with GetAccountFungibleTokens/GetAccountNFTs")]]
 	Account GetAccount(const Char* account, PhantasmaError* out_error = nullptr);
@@ -3288,6 +3331,56 @@ PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetAccountInfoResponse(const JSON
 	return out_error.code == 0;
 }
 
+// Returns account overviews for a batch of addresses; the address list is a nested JSON array.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountInfosRequest(JSONBuilder& request, const String* addresses, int addressCount)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getAccountInfos"));
+	AddJsonRpcRequestId(request);
+	json::AddArrayWithNestedStringArray(request, PHANTASMA_LITERAL("params"), addresses, addressCount);
+	json::EndObject(request);
+}
+
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountInfosRequest(JSONBuilder& request, const String* addresses, int addressCount, bool checkAddressReservedByte, const Char* addressType)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getAccountInfos"));
+	AddJsonRpcRequestId(request);
+	json::AddArrayWithNestedStringArray(request, PHANTASMA_LITERAL("params"), addresses, addressCount, checkAddressReservedByte, addressType);
+	json::EndObject(request);
+}
+
+PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetAccountInfosResponse(const JSONValue& _jsonResponse, PHANTASMA_VECTOR<AccountInfo>& output, PhantasmaError* pout_err)
+{
+	PhantasmaError err_dummy;
+	PhantasmaError& out_error = pout_err ? *pout_err : err_dummy;
+	JSONValue jsonResponse = PhantasmaJsonAPI::CheckResponse(_jsonResponse, out_error);
+	if( out_error.code )
+		return false;
+	bool jsonErr = false;
+	if( !json::IsArray(jsonResponse, jsonErr) )
+	{
+		PHANTASMA_EXCEPTION("Malformed response: No JSON array on the \"result\" node");
+		out_error.code = PhantasmaError::InvalidJSON;
+		return false;
+	}
+
+	const JSONArray& resultArray = json::AsArray(jsonResponse, jsonErr);
+	int resultArraySize = json::ArraySize(resultArray, jsonErr);
+	output.reserve(resultArraySize);
+	for( int i = 0; i < resultArraySize; ++i )
+	{
+		output.push_back(DeserializeAccountInfo(json::IndexArray(resultArray, i, jsonErr), jsonErr));
+		if( jsonErr || out_error.code )
+			break;
+	}
+	if( !out_error.code && jsonErr )
+		out_error.code = PhantasmaError::InvalidJSON;
+	return out_error.code == 0;
+}
+
 // Returns the account name and balance of given address.
 PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountRequest(JSONBuilder& request, const Char* account)
 {
@@ -4785,6 +4878,18 @@ PHANTASMA_FUNCTION AccountInfo PhantasmaAPI::GetAccountInfo(const Char* account,
 	return output;
 }
 
+PHANTASMA_FUNCTION PHANTASMA_VECTOR<AccountInfo> PhantasmaAPI::GetAccountInfos(const String* addresses, int addressCount, PhantasmaError* out_error)
+{
+	JSONBuilder request;
+	PhantasmaJsonAPI::MakeGetAccountInfosRequest(request, addresses, addressCount);
+	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
+	PhantasmaJsonAPI::UseRequestId(request);
+	PHANTASMA_VECTOR<AccountInfo> output;
+	if( !out_error || out_error->code == 0 )
+		PhantasmaJsonAPI::ParseGetAccountInfosResponse(json::Parse(response), output, out_error);
+	return output;
+}
+
 PHANTASMA_FUNCTION Account PhantasmaAPI::GetAccount(const Char* account, PhantasmaError* out_error)
 {
 	JSONBuilder request;
@@ -5959,6 +6064,8 @@ PHANTASMA_FUNCTION void BeginObject(JSONBuilder& b) { b.BeginObject(); }
 PHANTASMA_FUNCTION void AddString(JSONBuilder& b, const Char* key, const Char* value) { b.AddString(key, value); }
 template<class... Args>
 void AddArray(JSONBuilder& b, const Char* key, Args... args) { b.AddArray(key, args...); }
+template<class... Args>
+void AddArrayWithNestedStringArray(JSONBuilder& b, const Char* key, const String* values, int count, Args... args) { b.AddArrayWithNestedStringArray(key, values, count, args...); }
 PHANTASMA_FUNCTION void EndObject(JSONBuilder& b) { b.EndObject(); }
 #endif
 #endif

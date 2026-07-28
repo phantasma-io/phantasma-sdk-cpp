@@ -429,6 +429,47 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		        info.stake.unclaimed == "42000000000",
 		    "API GetAccountInfo parser reads the stake object");
 	}
+	{
+		// The batch contract is a NATIVE nested JSON array (Solana getMultipleAccounts style), not
+		// the comma-joined string the deprecated getAccounts wire used.
+		JSONBuilder request;
+		const String addresses[] = { String("P2Kaccount1"), String("P2Kaccount2") };
+		rpc::PhantasmaJsonAPI::MakeGetAccountInfosRequest(request, addresses, 2);
+		ReportJsonRpcRequest(
+		    ctx,
+		    request,
+		    "getAccountInfos",
+		    "[[\"P2Kaccount1\", \"P2Kaccount2\"]]",
+		    "API GetAccountInfos builder sends a nested address array");
+	}
+	{
+		JSONBuilder request;
+		const String addresses[] = { String("001122") };
+		rpc::PhantasmaJsonAPI::MakeGetAccountInfosRequest(request, addresses, 1, false, "Carbon");
+		ReportJsonRpcRequest(
+		    ctx,
+		    request,
+		    "getAccountInfos",
+		    "[[\"001122\"], false, \"Carbon\"]",
+		    "API GetAccountInfos builder forwards address interpretation after the array");
+	}
+	{
+		// Per-element decode carries the same stake-vs-stakes nuance as getAccountInfo, and the
+		// request order must survive the round-trip; distinct values make a mix-up visible.
+		rpc::PhantasmaError err{};
+		PHANTASMA_VECTOR<rpc::AccountInfo> infos;
+		const JSONDocument doc =
+		    R"({"id":"1","result":[)"
+		    R"({"address":"P2Kaccount1","name":"anonymous","stake":{"amount":"0","time":0,"unclaimed":"0"}},)"
+		    R"({"address":"P2Kaccount2","name":"myname","stake":{"amount":"1500000000000","time":1743520000,"unclaimed":"42000000000"}}]})";
+		const bool ok = rpc::PhantasmaJsonAPI::ParseGetAccountInfosResponse(json::Parse(doc), infos, &err);
+		Report(ctx,
+		    ok && err.code == 0 && infos.size() == 2 && infos[0].address == "P2Kaccount1" &&
+		        infos[0].name == "anonymous" && infos[0].stake.amount == "0" &&
+		        infos[1].address == "P2Kaccount2" && infos[1].name == "myname" &&
+		        infos[1].stake.amount == "1500000000000" && infos[1].stake.unclaimed == "42000000000",
+		    "API GetAccountInfos parser reads elements in request order");
+	}
 }
 
 } // namespace testcases
