@@ -240,7 +240,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		        series.carbonSeriesId == "7" && series.ownerAddress == "P-owner" && series.maxMint == "100" &&
 		        series.mintCount == "42" && series.currentSupply == "41" && series.maxSupply == "100" &&
 		        series.mode == rpc::TokenSeriesMode::Unique && series.metadata.size() == 1 &&
-		        series.metadata[0].value == "Series 55",
+		        series.metadata[0].value.Text() == "Series 55",
 		    "API GetTokenSeriesById parser accepts current Carbon series shape");
 	}
 	{
@@ -268,7 +268,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTokenDataResponse(json::Parse(doc), token, &err);
 		Report(ctx,
 		    ok && err.code == 0 && token.id == "1001" && token.properties.size() == 1 &&
-		        token.properties[0].key == "Name" && token.properties[0].value == "Crown #42",
+		        token.properties[0].key == "Name" && token.properties[0].value.Text() == "Crown #42",
 		    "API GetTokenData parser ignores stale NFT/property field casing without alias mapping");
 	}
 	{
@@ -291,7 +291,7 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		const bool ok = rpc::PhantasmaJsonAPI::ParseGetTokenDataResponse(json::Parse(doc), token, &err);
 		Report(ctx,
 		    ok && err.code == 0 && token.id.empty() && token.series == "55" && token.properties.size() == 1 &&
-		        token.properties[0].key.empty() && token.properties[0].value.empty(),
+		        token.properties[0].key.empty() && token.properties[0].value.Text().empty(),
 		    "API GetTokenData parser ignores stale-only NFT/property field names without alias mapping");
 	}
 	{

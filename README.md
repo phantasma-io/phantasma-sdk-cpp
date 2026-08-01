@@ -103,6 +103,42 @@
      bool PhantasmaJsonAPI::ParseGetPhantasmaVmConfigResponse(JSONValue, PhantasmaVmConfig);
 
 ------------------------------------------------------------------------------
+ VM values and typed extended events
+------------------------------------------------------------------------------
+  The RPC models live in `include/Rpc/`, which `PhantasmaAPI.h` includes for you:
+
+     Rpc/Prelude.h                            core typedefs and the JSON contract
+     Rpc/VmValue.h                            VM values: scalar, array or struct
+     Rpc/SpecialResolutionArgumentsBase.h     the argument tag, fallbacks and readers
+     Rpc/SpecialResolutionArguments*.h        the 36 argument shapes, one file per module
+     Rpc/SpecialResolutionArguments.h         module+method to shape dispatch
+     Rpc/ExtendedEvents.h                     event payloads and the event envelope
+
+  `TokenProperty::value` is a `VmValue`, so token metadata, series metadata,
+   organization metadata and NFT properties keep the shape the chain stores:
+
+     for( const TokenProperty& row : token.metadata )
+     {
+         if( row.value.IsText() )
+             use(row.key, row.value.Text());
+         else if( row.value.IsItems() && row.value.ItemCount() > 0 )
+             use(row.key, row.value.Item(0)->Field("mul"));
+     }
+
+  Inside a special resolution, every call's arguments are typed by the call's
+   module and method:
+
+     if( const TransferFungibleArguments* transfer =
+             SpecialResolutionArgumentsAs<TransferFungibleArguments>(call.arguments.get()) )
+         use(transfer->token, transfer->amount, transfer->from);
+
+  Decoding is total. A call method or an event kind this build does not model, and
+   a modeled one whose payload does not match, keep the JSON they arrived with -
+   in `UnrecognizedArguments::json` and `EventExtended::unknownData` - so a node
+   newer than the SDK never costs you the data it answered, and never fails the
+   block that carries it.
+
+------------------------------------------------------------------------------
  High-level API
 ------------------------------------------------------------------------------
   If you have defined `PHANTASMA_HTTPCLIENT`, then you can construct a 

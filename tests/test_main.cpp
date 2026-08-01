@@ -16,6 +16,7 @@ int main()
 	testcases::RunScriptBuilderTransactionTests(ctx);
 	testcases::RunCarbonTxExtraTests(ctx);
 	testcases::RunGasConfigFeeTests(ctx);
+	testcases::RunExtendedEventTests(ctx);
 	testcases::RunBigIntSerializationTests(ctx);
 	testcases::RunBigIntOperationFixtureTests(ctx);
 	testcases::RunBigIntBitwiseFixtureTests(ctx);
