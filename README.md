@@ -320,6 +320,15 @@
         
         int       ArraySize(    const JSONArray&,                    bool& out_error);
         JSONValue IndexArray(   const JSONArray&, int index,         bool& out_error);
+
+        // Enumerates the members of an object; needed by VM values and metadata maps, whose
+        // field names are chain data rather than a fixed schema.
+        template<class Visitor>
+        void      VisitObjectFields(const JSONValue&, Visitor&& visit, bool& out_error);
+        // Any scalar as text (a number or a boolean as its JSON text, a null as empty).
+        String    ScalarText(   const JSONValue&,                    bool& out_error);
+        // Any value back as JSON text; extended events keep unmodeled payloads this way.
+        String    ToText(       const JSONValue&,                    bool& out_error);
      
                                void BeginObject(JSONBuilder&);
                                void AddString  (JSONBuilder&, const Char* key, const Char* value);

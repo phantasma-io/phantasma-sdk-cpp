@@ -96,6 +96,52 @@ inline bool IsObject(const rapidjson::Value& v, bool& out_error)
 }
 
 inline int ArraySize(const rapidjson::Value& v, bool& out_error) { return v.IsArray() ? v.Size() : (out_error = true, 0); }
+
+// Enumerates the members of an object; see the VisitObjectFields contract in PhantasmaAPI.h.
+template<class Visitor>
+void VisitObjectFields(const rapidjson::Value& v, Visitor&& visit, bool& out_error)
+{
+	if( !v.IsObject() )
+	{
+		out_error = true;
+		return;
+	}
+	for( auto it = v.MemberBegin(); it != v.MemberEnd(); ++it )
+	{
+		if( !it->name.IsString() )
+			continue;
+		visit((String)it->name.GetString(), it->value);
+	}
+}
+
+// Renders one value back as JSON text.
+inline String ValueText(const rapidjson::Value& v)
+{
+	rapidjson::StringBuffer buffer;
+	rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+	v.Accept(writer);
+	return (String)buffer.GetString();
+}
+
+inline String ScalarText(const rapidjson::Value& v, bool& out_error)
+{
+	if( v.IsString() )
+		return (String)v.GetString();
+	if( v.IsNull() )
+		return String();
+	if( v.IsBool() )
+		return (String)(v.GetBool() ? "true" : "false");
+	if( v.IsNumber() )
+		return ValueText(v);
+	out_error = true;
+	return String();
+}
+
+inline String ToText(const rapidjson::Value& v, bool& out_error)
+{
+	(void)out_error;
+	return ValueText(v);
+}
 inline const rapidjson::Value& IndexArray(const rapidjson::Value& v, int index, bool& out_error) { return v.IsArray() ? v[index] : (out_error = true, null); }
 
 typedef RapidJsonBufferWriter Builder;

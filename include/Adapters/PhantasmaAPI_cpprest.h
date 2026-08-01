@@ -77,6 +77,39 @@ inline bool IsObject(const web::json::value& v, bool& out_error) { return v.is_o
 inline int ArraySize(const web::json::array& a, bool& out_error) { return (int)a.size(); }
 inline web::json::value IndexArray(const web::json::array& a, int index, bool& out_error) { return a.at((size_t)index); }
 
+// Enumerates the members of an object; see the VisitObjectFields contract in PhantasmaAPI.h.
+template<class Visitor>
+void VisitObjectFields(const web::json::value& v, Visitor&& visit, bool& out_error)
+{
+	if( !v.is_object() )
+	{
+		out_error = true;
+		return;
+	}
+	for( auto const& entry : v.as_object() )
+		visit((String)entry.first, entry.second);
+}
+
+inline String ScalarText(const web::json::value& v, bool& out_error)
+{
+	if( v.is_string() )
+		return v.as_string();
+	if( v.is_null() )
+		return String();
+	if( v.is_boolean() )
+		return v.as_bool() ? PHANTASMA_LITERAL("true") : PHANTASMA_LITERAL("false");
+	if( v.is_number() )
+		return v.serialize();
+	out_error = true;
+	return String();
+}
+
+inline String ToText(const web::json::value& v, bool& out_error)
+{
+	(void)out_error;
+	return v.serialize();
+}
+
 inline void BeginObject(web::json::value&) {}
 inline void EndObject(web::json::value&) {}
 inline void AddString(web::json::value& root, const Char* key, const Char* value) { root[key] = web::json::value::string(value); }
