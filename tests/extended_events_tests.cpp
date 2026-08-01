@@ -391,37 +391,55 @@ void RunExtendedEventTests(TestContext& ctx)
 
 	{
 		// Indented JSON must parse exactly like compact JSON. The built-in parser used to end an
-		// object at the last value rather than at the closing brace, so any whitespace before that
-		// brace made every enclosing array misparse - which is what an answer captured from a
-		// pretty-printing proxy or a hand-written fixture looks like.
+		// object at its last value rather than at the closing brace, so any whitespace before that
+		// brace left the offset inside the value - and every array of objects then lost or
+		// misread its elements. An indented array of two calls is what pins that: reading it
+		// requires the exact end offset of the first element.
 		bool compactErr = false;
 		bool indentedErr = false;
 		const JSONDocument compact =
-		    R"({"moduleId":1,"module":"token","methodId":0,"method":"TransferFungible","arguments":{"from":"S3dPn","to":"S3dPn","amount":"5","token":"KCAL","tokenId":"1"},"calls":[]})";
+		    R"({"resolutionId":37,"calls":[{"moduleId":1,"module":"token","methodId":0,"method":"TransferFungible","arguments":{"amount":"5","token":"KCAL"}},{"moduleId":0,"module":"governance","methodId":6,"method":"RegisterName","arguments":{"address":"P2K6h","name":"alex"}}]})";
 		const JSONDocument indented = R"({
-			"moduleId": 1,
-			"module": "token",
-			"methodId": 0,
-			"method": "TransferFungible",
-			"arguments": {
-				"from": "S3dPn",
-				"to": "S3dPn",
-				"amount": "5",
-				"token": "KCAL",
-				"tokenId": "1"
-			},
-			"calls": []
+			"resolutionId": 37,
+			"calls": [
+				{
+					"moduleId": 1,
+					"module": "token",
+					"methodId": 0,
+					"method": "TransferFungible",
+					"arguments": {
+						"amount": "5",
+						"token": "KCAL"
+					}
+				},
+				{
+					"moduleId": 0,
+					"module": "governance",
+					"methodId": 6,
+					"method": "RegisterName",
+					"arguments": {
+						"address": "P2K6h",
+						"name": "alex"
+					}
+				}
+			]
 		})";
-		const rpc::SpecialResolutionCall compactCall = ParseCall(compact, compactErr);
-		const rpc::SpecialResolutionCall indentedCall = ParseCall(indented, indentedErr);
-		const rpc::TransferFungibleArguments* compactArguments =
-		    rpc::SpecialResolutionArgumentsAs<rpc::TransferFungibleArguments>(compactCall.arguments.get());
-		const rpc::TransferFungibleArguments* indentedArguments =
-		    rpc::SpecialResolutionArgumentsAs<rpc::TransferFungibleArguments>(indentedCall.arguments.get());
+		const rpc::SpecialResolutionData compactData =
+		    rpc::ParseSpecialResolutionData(json::Parse(compact), compactErr);
+		const rpc::SpecialResolutionData indentedData =
+		    rpc::ParseSpecialResolutionData(json::Parse(indented), indentedErr);
+		const rpc::TransferFungibleArguments* transfer =
+		    indentedData.calls.size() == 2 ? rpc::SpecialResolutionArgumentsAs<rpc::TransferFungibleArguments>(
+		                                         indentedData.calls[0].arguments.get())
+		                                   : nullptr;
+		const rpc::RegisterNameArguments* registered =
+		    indentedData.calls.size() == 2 ? rpc::SpecialResolutionArgumentsAs<rpc::RegisterNameArguments>(
+		                                         indentedData.calls[1].arguments.get())
+		                                   : nullptr;
 		Report(ctx,
-		    !compactErr && !indentedErr && compactArguments != nullptr && indentedArguments != nullptr &&
-		        compactArguments->amount == indentedArguments->amount && indentedArguments->amount == "5" &&
-		        indentedArguments->token == "KCAL",
+		    !compactErr && !indentedErr && compactData.calls.size() == 2 && indentedData.calls.size() == 2 &&
+		        transfer != nullptr && transfer->amount == "5" && transfer->token == "KCAL" &&
+		        registered != nullptr && registered->name == "alex" && indentedData.calls[1].methodId == 6,
 		    "Indented JSON parses like compact JSON");
 	}
 
