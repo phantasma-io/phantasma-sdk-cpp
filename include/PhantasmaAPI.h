@@ -5674,10 +5674,17 @@ inline size_t SkipObject(const JSONValue& v, size_t i, bool& out_error)
 	for( ; i < v.size(); )
 	{
 		size_t keyBegin = v.find_first_of(PHANTASMA_LITERAL("\"}"), i);
-		if( keyBegin == JSONValue::npos || v[keyBegin] == '}' )
+		if( keyBegin == JSONValue::npos )
 		{
 			break;
 		} //no more keys
+		if( v[keyBegin] == '}' )
+		{
+			// The object ends here. The offset has to come from the brace itself: the last value
+			// can be followed by whitespace, and returning one past that value would land inside
+			// it, which made every enclosing array or object misparse indented JSON.
+			return keyBegin + 1;
+		}
 		size_t keyEnd = v.find_first_of('"', keyBegin + 1);
 		if( keyEnd == JSONValue::npos )
 		{
