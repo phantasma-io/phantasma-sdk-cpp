@@ -31,6 +31,7 @@ int main()
 	testcases::RunSecureBigIntTests(ctx);
 	testcases::RunBigIntMultiWordTests(ctx);
 	testcases::RunIntXIs8ByteSafeTests(ctx);
+	testcases::RunInt256SignGuardByteTests(ctx);
 	testcases::RunCallSectionsTests(ctx);
 
 	if( ctx.failed == 0 )

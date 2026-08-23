@@ -786,7 +786,11 @@ inline uint256 uint256::FromBytes(const ByteView& data)
 	uint8_t* dst = (uint8_t*)&i;
 	if( data.length < 32 )
 		memset(dst, 0, 32);
-	memcpy(dst, data.bytes, data.length);
+	// The 33rd byte the check above accepts is a sign-extension guard from the Phantasma/C# signed
+	// BigInteger encoding, not a 257th payload byte, so only the first 32 bytes belong in this object.
+	// Copying all 33 writes one byte past a 32-byte stack object while producing the same value.
+	const size_t payloadLength = data.length > sizeof(i) ? sizeof(i) : data.length;
+	memcpy(dst, data.bytes, payloadLength);
 	return i;
 }
 inline int256 int256::FromBytes(const ByteView& data)
@@ -799,7 +803,10 @@ inline int256 int256::FromBytes(const ByteView& data)
 	uint8_t* dst = (uint8_t*)&i;
 	if( data.length < 32 )
 		memset(dst, fill, 32);
-	memcpy(dst, data.bytes, data.length);
+	// Same bound as the unsigned overload: the 33rd byte is sign metadata, and copying it would write
+	// past this 32-byte object while producing the same value.
+	const size_t payloadLength = data.length > sizeof(i) ? sizeof(i) : data.length;
+	memcpy(dst, data.bytes, payloadLength);
 	return i;
 }
 inline intx intx::FromBytes(const ByteView& data, bool isSigned)
