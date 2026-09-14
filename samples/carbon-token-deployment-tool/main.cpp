@@ -31,6 +31,8 @@
 #include "../../include/Carbon/Alloc.h"
 #include "../../include/Carbon/Contracts/Token.h"
 #include "../../include/Carbon/Tx.h"
+#include "../../include/Carbon/FeePlan.h"
+#include "../../include/Carbon/FeePlanSummary.h"
 #include "../../include/Numerics/Base16.h"
 
 using namespace phantasma;
@@ -59,14 +61,6 @@ struct Config
 	std::string tokenMetadataRaw;
 	std::string seriesMetadataRaw;
 	std::string nftMetadataRaw;
-	std::optional<uint64_t> createTokenMaxData;
-	std::optional<uint64_t> createSeriesMaxData;
-	std::optional<uint64_t> mintTokenMaxData;
-	std::optional<uint64_t> gasFeeBase;
-	std::optional<uint64_t> gasFeeCreateTokenBase;
-	std::optional<uint64_t> gasFeeCreateTokenSymbol;
-	std::optional<uint64_t> gasFeeCreateTokenSeries;
-	std::optional<uint64_t> gasFeeMultiplier;
 	bool dryRun = false;
 };
 
@@ -454,22 +448,6 @@ static Config LoadConfig(const Args& args)
 	cfg.tokenMetadataRaw = Pick(args, toml, "token-metadata", "token_metadata");
 	cfg.seriesMetadataRaw = Pick(args, toml, "series-metadata", "series_metadata");
 	cfg.nftMetadataRaw = Pick(args, toml, "nft-metadata", "nft_metadata");
-	std::string createTokenMax = Pick(args, toml, "create-token-max-data", "create_token_max_data");
-	if (!createTokenMax.empty()) cfg.createTokenMaxData = ParseUint64(createTokenMax, "create_token_max_data");
-	std::string createSeriesMax = Pick(args, toml, "create-token-series-max-data", "create_token_series_max_data");
-	if (!createSeriesMax.empty()) cfg.createSeriesMaxData = ParseUint64(createSeriesMax, "create_token_series_max_data");
-	std::string mintMax = Pick(args, toml, "mint-token-max-data", "mint_token_max_data");
-	if (!mintMax.empty()) cfg.mintTokenMaxData = ParseUint64(mintMax, "mint_token_max_data");
-	std::string gasBase = Pick(args, toml, "gas-fee-base", "gas_fee_base");
-	if (!gasBase.empty()) cfg.gasFeeBase = ParseUint64(gasBase, "gas_fee_base");
-	std::string gasCreateTokenBase = Pick(args, toml, "gas-fee-create-token-base", "gas_fee_create_token_base");
-	if (!gasCreateTokenBase.empty()) cfg.gasFeeCreateTokenBase = ParseUint64(gasCreateTokenBase, "gas_fee_create_token_base");
-	std::string gasCreateTokenSymbol = Pick(args, toml, "gas-fee-create-token-symbol", "gas_fee_create_token_symbol");
-	if (!gasCreateTokenSymbol.empty()) cfg.gasFeeCreateTokenSymbol = ParseUint64(gasCreateTokenSymbol, "gas_fee_create_token_symbol");
-	std::string gasCreateSeries = Pick(args, toml, "gas-fee-create-token-series", "gas_fee_create_token_series");
-	if (!gasCreateSeries.empty()) cfg.gasFeeCreateTokenSeries = ParseUint64(gasCreateSeries, "gas_fee_create_token_series");
-	std::string gasMult = Pick(args, toml, "gas-fee-multiplier", "gas_fee_multiplier");
-	if (!gasMult.empty()) cfg.gasFeeMultiplier = ParseUint64(gasMult, "gas_fee_multiplier");
 	cfg.dryRun = HasFlag(args, "dry-run") || (toml.find("dry_run") != toml.end() && toml.at("dry_run") == "true");
 
 	return cfg;
@@ -521,6 +499,38 @@ static void Ensure(bool condition, const std::string& message)
 	}
 }
 
+// Plans a built message against the chain's own prices, prints the plan, and returns the planned
+// copy. Builders carry no prices, so this step is what makes a message sendable: under gas model v2
+// the chain bills every byte the transaction puts in the block, and no fixed number predicts that.
+static Blockchain::TxMsg PlanTx(PhantasmaAPI& api, const Blockchain::TxMsg& msg)
+{
+	PhantasmaError err;
+	const GasConfigResult gas = api.GetGasConfig(&err);
+	Ensure(err.code == 0, "Failed to read the chain gas config: " + err.message);
+
+	FeePlanOptions options;
+	options.infusionsRead = true; // nothing this tool sends burns an NFT
+	uint32_t required = 0;
+	if (!Blockchain::RequiredWitnessCount(msg.type, required))
+	{
+		options.witnessCount = 1; // this tool signs with the one key it holds
+	}
+
+	FeePlan plan;
+	Ensure(PlanFees(msg, ToGasConfig(gas.gasConfig), options, plan), "Failed to plan the transaction fee");
+
+	const FeePlanSummary shown = SummarizeFeePlan(plan);
+	std::cout << "Fee plan: envelope " << plan.envelopeBytes << " bytes" << std::endl;
+	// A plan the SDK does not call a prediction is a ceiling the settlement can undercut, so the
+	// printed bill says which of the two it is rather than looking like a quote either way.
+	std::cout << "  gas bill        " << (plan.exact ? "" : "up to ") << shown.gasBill
+		<< " KCAL (" << plan.expectedGasBill << " atoms)" << std::endl;
+	std::cout << "  gas offer       " << shown.gasOffer << " KCAL (" << plan.maxGas << " atoms)" << std::endl;
+	std::cout << "  storage deposit " << shown.storageCeiling << " SOUL (" << plan.maxData << " atoms, "
+		<< plan.newStorageQuanta << " quanta, refunded when the rows are deleted)" << std::endl;
+	return plan.Apply(msg);
+}
+
 static void RunCreateToken(const Config& cfg)
 {
 	Ensure(!cfg.rpc.empty(), "rpc is required");
@@ -528,11 +538,6 @@ static void RunCreateToken(const Config& cfg)
 	Ensure(!cfg.wif.empty(), "wif is required");
 	Ensure(!cfg.symbol.empty(), "symbol is required");
 	Ensure(!cfg.tokenType.empty(), "token_type is required");
-	Ensure(cfg.gasFeeBase.has_value(), "gas_fee_base is required");
-	Ensure(cfg.gasFeeCreateTokenBase.has_value(), "gas_fee_create_token_base is required");
-	Ensure(cfg.gasFeeCreateTokenSymbol.has_value(), "gas_fee_create_token_symbol is required");
-	Ensure(cfg.gasFeeMultiplier.has_value(), "gas_fee_multiplier is required");
-	Ensure(cfg.createTokenMaxData.has_value(), "create_token_max_data is required");
 	Ensure(!cfg.tokenMetadataRaw.empty(), "token_metadata is required");
 
 	std::string tokenType = cfg.tokenType;
@@ -584,13 +589,11 @@ static void RunCreateToken(const Config& cfg)
 		tokenMetadataBytes,
 		isFungible ? nullptr : &schemasBytes);
 
-	const CreateTokenFeeOptions feeOptions(
-		cfg.gasFeeBase.value(),
-		cfg.gasFeeCreateTokenBase.value(),
-		cfg.gasFeeCreateTokenSymbol.value(),
-		cfg.gasFeeMultiplier.value());
+	TxEnvelope tx = CreateTokenTxHelper::BuildTx(tokenInfoOwned.View(), owner);
 
-	const TxEnvelope tx = CreateTokenTxHelper::BuildTx(tokenInfoOwned.View(), owner, &feeOptions, cfg.createTokenMaxData.value());
+	CurlClient http(cfg.rpc);
+	PhantasmaAPI api(http);
+	tx.msg = PlanTx(api, tx.msg);
 
 	if (cfg.dryRun)
 	{
@@ -600,8 +603,6 @@ static void RunCreateToken(const Config& cfg)
 		return;
 	}
 
-	CurlClient http(cfg.rpc);
-	PhantasmaAPI api(http);
 	PhantasmaError err;
 	const String hash = SignAndSendCarbonTransaction(api, tx.msg, keys, &err);
 	Ensure(err.code == 0, "Failed to send transaction: " + err.message);
@@ -621,10 +622,6 @@ static void RunCreateSeries(const Config& cfg)
 	Ensure(!cfg.nexus.empty(), "nexus is required");
 	Ensure(!cfg.wif.empty(), "wif is required");
 	Ensure(cfg.carbonTokenId.has_value(), "carbon_token_id is required");
-	Ensure(cfg.gasFeeBase.has_value(), "gas_fee_base is required");
-	Ensure(cfg.gasFeeCreateTokenSeries.has_value(), "gas_fee_create_token_series is required");
-	Ensure(cfg.gasFeeMultiplier.has_value(), "gas_fee_multiplier is required");
-	Ensure(cfg.createSeriesMaxData.has_value(), "create_token_series_max_data is required");
 	Ensure(!cfg.tokenSchemasRaw.empty(), "token_schemas is required");
 	Ensure(!cfg.seriesMetadataRaw.empty(), "series_metadata is required");
 
@@ -639,12 +636,11 @@ static void RunCreateSeries(const Config& cfg)
 
 	const SeriesInfoOwned seriesInfoOwned = SeriesInfoBuilder::Build(schemasOwned.view.seriesMetadata, seriesId, 0, 0, owner, seriesMetadata);
 
-	const CreateSeriesFeeOptions feeOptions(
-		cfg.gasFeeBase.value(),
-		cfg.gasFeeCreateTokenSeries.value(),
-		cfg.gasFeeMultiplier.value());
+	TxEnvelope tx = CreateTokenSeriesTxHelper::BuildTx(cfg.carbonTokenId.value(), seriesInfoOwned.View(), owner);
 
-	const TxEnvelope tx = CreateTokenSeriesTxHelper::BuildTx(cfg.carbonTokenId.value(), seriesInfoOwned.View(), owner, &feeOptions, cfg.createSeriesMaxData.value());
+	CurlClient http(cfg.rpc);
+	PhantasmaAPI api(http);
+	tx.msg = PlanTx(api, tx.msg);
 
 	if (cfg.dryRun)
 	{
@@ -654,8 +650,6 @@ static void RunCreateSeries(const Config& cfg)
 		return;
 	}
 
-	CurlClient http(cfg.rpc);
-	PhantasmaAPI api(http);
 	PhantasmaError err;
 	const String hash = SignAndSendCarbonTransaction(api, tx.msg, keys, &err);
 	Ensure(err.code == 0, "Failed to send transaction: " + err.message);
@@ -677,9 +671,6 @@ static void RunMintNft(const Config& cfg)
 	Ensure(!cfg.wif.empty(), "wif is required");
 	Ensure(cfg.carbonTokenId.has_value(), "carbon_token_id is required");
 	Ensure(cfg.phantasmaSeriesId.has_value(), "phantasma_series_id is required");
-	Ensure(cfg.gasFeeBase.has_value(), "gas_fee_base is required");
-	Ensure(cfg.gasFeeMultiplier.has_value(), "gas_fee_multiplier is required");
-	Ensure(cfg.mintTokenMaxData.has_value(), "mint_token_max_data is required");
 	Ensure(!cfg.tokenSchemasRaw.empty(), "token_schemas is required");
 	Ensure(!cfg.nftMetadataRaw.empty(), "nft_metadata is required");
 
@@ -699,15 +690,11 @@ static void RunMintNft(const Config& cfg)
 	std::cout << "Minting NFT through deterministic chain-generated id flow using phantasma series ID "
 		<< cfg.phantasmaSeriesId->ToStringUnsigned() << std::endl;
 
-	const MintNftFeeOptions feeOptions(cfg.gasFeeBase.value(), cfg.gasFeeMultiplier.value());
-	const TxEnvelope tx = MintPhantasmaNonFungibleTxHelper::BuildTx(
-		cfg.carbonTokenId.value(),
-		owner,
-		owner,
-		1,
-		&token,
-		&feeOptions,
-		cfg.mintTokenMaxData.value());
+	TxEnvelope tx = MintPhantasmaNonFungibleTxHelper::BuildTx(cfg.carbonTokenId.value(), owner, owner, 1, &token);
+
+	CurlClient http(cfg.rpc);
+	PhantasmaAPI api(http);
+	tx.msg = PlanTx(api, tx.msg);
 
 	if (cfg.dryRun)
 	{
@@ -717,8 +704,6 @@ static void RunMintNft(const Config& cfg)
 		return;
 	}
 
-	CurlClient http(cfg.rpc);
-	PhantasmaAPI api(http);
 	PhantasmaError err;
 	const String hash = SignAndSendCarbonTransaction(api, tx.msg, keys, &err);
 	Ensure(err.code == 0, "Failed to send transaction: " + err.message);

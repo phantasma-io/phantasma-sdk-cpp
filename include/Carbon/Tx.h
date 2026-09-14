@@ -52,6 +52,24 @@ enum class TokenContract_Methods : uint32_t
 	MintPhantasmaNonFungible = 27,
 };
 
+// The governance module's methods, as the contract declares them.
+enum class GovernanceContract_Methods : uint32_t
+{
+	Genesis = 0,
+	RegisterName = 1,
+	SpecialResolution = 2,
+	SetGasConfig = 3,
+	SetChainConfig = 4,
+	SetMetadata = 5,
+	SetNodeConfig = 6,
+	GetSpecialResolutionCount = 7,
+	LookupName = 8,
+	LookupAddress = 9,
+	SetFeatureLevel = 10,
+	RepairStakingOrganizationMembership = 11,
+	MigrateAddresses = 12,
+};
+
 struct TokenHelper {
 	static Bytes32 GetNftAddress(uint64_t carbonTokenId, uint64_t instanceId)
 	{
@@ -65,6 +83,27 @@ struct TokenHelper {
 		Write8u(instanceId, w);
 		return Bytes32(View(buffer));
 	}
+
+	// Returns true if a 32-byte address is an NFT-derived address. Every minted instance owns such
+	// an address, and assets infused into that NFT are sent to it.
+	//
+	// The test is syntactic and is the one the chain applies (carbon::IsNftAddress): fifteen zero
+	// bytes, a 0x01 marker, then a nonzero token id and a nonzero instance id. PlanFees uses it to
+	// price the recipient's owner lookup, which a transfer into such an address pays.
+	static bool IsNftAddress(const Bytes32& address)
+	{
+		if( address.bytes[15] != 1 )
+			return false;
+		for( int i = 0; i != 15; ++i )
+		{
+			if( address.bytes[i] != 0 )
+				return false;
+		}
+		uint64_t carbonTokenId = 0, instanceId = 0;
+		memcpy(&carbonTokenId, address.bytes + 16, sizeof(carbonTokenId));
+		memcpy(&instanceId, address.bytes + 24, sizeof(instanceId));
+		return carbonTokenId != 0 && instanceId != 0;
+	}
 };
 
 struct TxEnvelope {
@@ -74,156 +113,87 @@ struct TxEnvelope {
 	const phantasma::carbon::Blockchain::TxMsg& View() const { return msg; }
 };
 
-inline int64_t GetDefaultExpiry()
+// Explicit transaction limits a builder writes into the message.
+//
+// Builders carry no prices. A message built without maxGas has a zero gas offer, and that marks it
+// as not yet planned. Plan it with PlanFees (Carbon/FeePlan.h) before signing, or set the offer
+// here. Under gas model v2 the chain bills every byte the transaction puts in the block, and no
+// fixed number predicts that.
+struct TxLimits {
+	// Gas offer in kcal-base (TxMsg maxGas). Zero means unplanned.
+	uint64_t maxGas = 0;
+	// Storage-escrow ceiling in data-token atoms (TxMsg maxData).
+	uint64_t maxData = 0;
+	// Expiry as a millisecond timestamp (TxMsg expiry). Zero means DefaultExpiryMs from now.
+	//
+	// A flow with a person in it should set this from the chain's own window instead. Examples are a
+	// hardware wallet confirming and a wallet-link round trip. See ExpiryWithin.
+	int64_t expiry = 0;
+};
+
+// Default lifetime of a message a builder stamps, in milliseconds.
+//
+// The chain reads expiry in milliseconds and refuses anything at or beyond now + expiryWindow.
+// expiryWindow is a chain setting, and its node default is 60,000 ms.
+//
+// A default has to hold on the shortest window a chain may run. The value is also compared against
+// the NODE's clock, so it has to survive the two clocks disagreeing. That is why it keeps a quarter
+// of a minute of headroom and does not take the whole 60,000.
+//
+// A chain that allows longer reports its own window as expiryWindow in getGasConfig.
+constexpr int64_t DefaultExpiryMs = 45000;
+
+inline int64_t UnixTimeMs()
 {
-	// Chain tx queues drop messages with expiry <= now, so default to now+60s like TS/C# helpers.
 	using namespace std::chrono;
-	return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() + 60'000;
+	return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
-struct FeeOptions {
-	uint64_t gasFeeBase;
-	uint64_t feeMultiplier;
+// Returns the expiry for a message built to be signed and sent now.
+inline int64_t DefaultExpiry()
+{
+	return UnixTimeMs() + DefaultExpiryMs;
+}
 
-	explicit FeeOptions(uint64_t base = 10000, uint64_t multiplier = 1000)
-	    : gasFeeBase(base), feeMultiplier(multiplier)
+// Returns the latest expiry a chain with this window will still admit, less a margin for the clock
+// the node compares it against. Use it when a person sits between building a transaction and
+// signing it. The chain's window is usually far longer than DefaultExpiryMs, and the whole of it is
+// available.
+//
+// expiryWindowMs - the chain's window, from getGasConfig.
+// marginMs       - headroom for clock skew and the trip to the node.
+//
+// Answers 0 for a window a margin leaves nothing of.
+inline int64_t ExpiryWithin(int64_t expiryWindowMs, int64_t marginMs = 5000)
+{
+	if( expiryWindowMs <= 0 || marginMs < 0 || expiryWindowMs - marginMs <= 0 )
 	{
-	}
-
-	virtual ~FeeOptions() = default;
-
-	virtual uint64_t CalculateMaxGas() const
-	{
-		return CalculateMaxGas(1);
-	}
-
-	virtual uint64_t CalculateMaxGas(uint64_t count) const
-	{
-		return MultiplyGas(gasFeeBase, feeMultiplier, RequirePositiveCount(count, "FeeOptions::CalculateMaxGas"));
-	}
-
-  protected:
-	static uint64_t RequirePositiveCount(uint64_t count, const char* methodName)
-	{
-		if( count == 0 )
-		{
-			PHANTASMA_EXCEPTION(std::string(methodName) + " count must be positive");
-		}
-		return count;
-	}
-
-	static void RequireNoMeaningfulCount(uint64_t count, const char* methodName)
-	{
-		RequirePositiveCount(count, methodName);
-		if( count != 1 )
-		{
-			PHANTASMA_EXCEPTION(std::string(methodName) + " is not count-sensitive; count must be 1 when provided");
-		}
-	}
-
-	static uint64_t MultiplyGas(uint64_t base, uint64_t multiplier, uint64_t count = 1)
-	{
-		const uint64_t max = std::numeric_limits<uint64_t>::max();
-		if( base != 0 && multiplier > max / base )
-		{
-			PHANTASMA_EXCEPTION("fee gas calculation overflow");
-		}
-		const uint64_t baseGas = base * multiplier;
-		if( baseGas != 0 && count > max / baseGas )
-		{
-			PHANTASMA_EXCEPTION("fee gas calculation overflow");
-		}
-		return baseGas * count;
-	}
-};
-
-struct CreateTokenFeeOptions : public FeeOptions {
-	uint64_t gasFeeCreateTokenBase;
-	uint64_t gasFeeCreateTokenSymbol;
-
-	CreateTokenFeeOptions(uint64_t base = 10000, uint64_t createTokenBase = 10000000000ULL, uint64_t createTokenSymbol = 10000000000ULL, uint64_t multiplier = 10000)
-	    : FeeOptions(base, multiplier), gasFeeCreateTokenBase(createTokenBase), gasFeeCreateTokenSymbol(createTokenSymbol)
-	{
-	}
-
-	uint64_t CalculateMaxGas() const override
-	{
-		return CalculateMaxGas(SmallString());
-	}
-
-	uint64_t CalculateMaxGas(uint64_t) const override
-	{
-		PHANTASMA_EXCEPTION("CreateTokenFeeOptions::CalculateMaxGas symbol must be a SmallString");
+		PHANTASMA_EXCEPTION("expiry window must leave a positive lifetime after the margin");
 		return 0;
 	}
+	return UnixTimeMs() + (expiryWindowMs - marginMs);
+}
 
-	uint64_t CalculateMaxGas(const SmallString& symbol) const
-	{
-		const size_t len = symbol.length;
-		uint64_t symbolPart = gasFeeCreateTokenSymbol;
-		if( len > 0 )
-		{
-			const size_t shift = len > 0 ? len - 1 : 0;
-			if( shift < sizeof(uint64_t) * 8 )
-			{
-				symbolPart >>= shift;
-			}
-		}
-		return MultiplyGas(gasFeeBase + gasFeeCreateTokenBase + symbolPart, feeMultiplier);
-	}
-};
+namespace TxLimitsDetail {
 
-struct CreateSeriesFeeOptions : public FeeOptions {
-	uint64_t gasFeeCreateSeriesBase;
+// Writes the limits into a message the builders assemble.
+inline void Apply(phantasma::carbon::Blockchain::TxMsg& msg, const TxLimits& limits)
+{
+	msg.maxGas = limits.maxGas;
+	msg.maxData = limits.maxData;
+	msg.expiry = limits.expiry == 0 ? DefaultExpiry() : limits.expiry;
+}
 
-	CreateSeriesFeeOptions(uint64_t base = 10000, uint64_t createSeriesBase = 2500000000ULL, uint64_t multiplier = 10000)
-	    : FeeOptions(base, multiplier), gasFeeCreateSeriesBase(createSeriesBase)
-	{
-	}
-
-	uint64_t CalculateMaxGas() const override
-	{
-		return MultiplyGas(gasFeeBase + gasFeeCreateSeriesBase, feeMultiplier);
-	}
-
-	uint64_t CalculateMaxGas(uint64_t count) const override
-	{
-		RequireNoMeaningfulCount(count, "CreateSeriesFeeOptions::CalculateMaxGas");
-		return CalculateMaxGas();
-	}
-};
-
-struct MintNftFeeOptions : public FeeOptions {
-	explicit MintNftFeeOptions(uint64_t base = 10000, uint64_t multiplier = 1000)
-	    : FeeOptions(base, multiplier)
-	{
-	}
-
-	uint64_t CalculateMaxGas() const override
-	{
-		return CalculateMaxGas(1);
-	}
-
-	uint64_t CalculateMaxGas(uint64_t count) const override
-	{
-		return MultiplyGas(gasFeeBase, feeMultiplier, RequirePositiveCount(count, "MintNftFeeOptions::CalculateMaxGas"));
-	}
-};
+} // namespace TxLimitsDetail
 
 struct CreateTokenTxHelper {
-	static TxEnvelope BuildTx(const TokenInfo& tokenInfo, const Bytes32& creatorPublicKey, const CreateTokenFeeOptions* feeOptions = nullptr, uint64_t maxData = 0, int64_t expiry = 0)
+	static TxEnvelope BuildTx(const TokenInfo& tokenInfo, const Bytes32& creatorPublicKey, const TxLimits& limits = {})
 	{
-		const CreateTokenFeeOptions fees = feeOptions ? *feeOptions : CreateTokenFeeOptions();
-		const uint64_t maxGas = fees.CalculateMaxGas(tokenInfo.symbol);
-		const int64_t effectiveExpiry = (expiry == 0) ? GetDefaultExpiry() : expiry;
-
 		TxEnvelope env;
 		env.buffers.push_back(CarbonSerialize(tokenInfo));
 
 		env.msg.type = phantasma::carbon::Blockchain::TxTypes::Call;
-		env.msg.expiry = effectiveExpiry;
-		env.msg.maxGas = maxGas;
-		env.msg.maxData = maxData;
+		TxLimitsDetail::Apply(env.msg, limits);
 		env.msg.gasFrom = creatorPublicKey;
 		env.msg.payload = SmallString();
 		env.msg.call = phantasma::carbon::Blockchain::TxMsgCall{
@@ -244,12 +214,8 @@ struct CreateTokenTxHelper {
 };
 
 struct CreateTokenSeriesTxHelper {
-	static TxEnvelope BuildTx(uint64_t tokenId, const SeriesInfo& seriesInfo, const Bytes32& creatorPublicKey, const CreateSeriesFeeOptions* feeOptions = nullptr, uint64_t maxData = 0, int64_t expiry = 0)
+	static TxEnvelope BuildTx(uint64_t tokenId, const SeriesInfo& seriesInfo, const Bytes32& creatorPublicKey, const TxLimits& limits = {})
 	{
-		const CreateSeriesFeeOptions fees = feeOptions ? *feeOptions : CreateSeriesFeeOptions();
-		const uint64_t maxGas = fees.CalculateMaxGas();
-		const int64_t effectiveExpiry = (expiry == 0) ? GetDefaultExpiry() : expiry;
-
 		TxEnvelope env;
 
 		ByteArray argsBuffer;
@@ -259,9 +225,7 @@ struct CreateTokenSeriesTxHelper {
 		env.buffers.push_back(argsBuffer);
 
 		env.msg.type = phantasma::carbon::Blockchain::TxTypes::Call;
-		env.msg.expiry = effectiveExpiry;
-		env.msg.maxGas = maxGas;
-		env.msg.maxData = maxData;
+		TxLimitsDetail::Apply(env.msg, limits);
 		env.msg.gasFrom = creatorPublicKey;
 		env.msg.payload = SmallString();
 		env.msg.call = phantasma::carbon::Blockchain::TxMsgCall{
@@ -289,19 +253,11 @@ struct MintNonFungibleTxHelper {
 	    const Bytes32& receiverPublicKey,
 	    const ByteArray& rom,
 	    const ByteArray& ram,
-	    const MintNftFeeOptions* feeOptions = nullptr,
-	    uint64_t maxData = 0,
-	    int64_t expiry = 0)
+	    const TxLimits& limits = {})
 	{
-		const MintNftFeeOptions fees = feeOptions ? *feeOptions : MintNftFeeOptions();
-		const uint64_t maxGas = fees.CalculateMaxGas(1);
-		const int64_t effectiveExpiry = (expiry == 0) ? GetDefaultExpiry() : expiry;
-
 		TxEnvelope env;
 		env.msg.type = phantasma::carbon::Blockchain::TxTypes::MintNonFungible;
-		env.msg.expiry = effectiveExpiry;
-		env.msg.maxGas = maxGas;
-		env.msg.maxData = maxData;
+		TxLimitsDetail::Apply(env.msg, limits);
 		env.msg.gasFrom = senderPublicKey;
 		env.msg.payload = SmallString();
 		env.msg.mintNonFungible = phantasma::carbon::Blockchain::TxMsgMintNonFungible{
@@ -337,14 +293,13 @@ struct MintPhantasmaNonFungibleTxHelper {
 	    const Bytes32& receiverPublicKey,
 	    uint32_t numTokens,
 	    const PhantasmaNftMintInfo* tokens,
-	    const MintNftFeeOptions* feeOptions = nullptr,
-	    uint64_t maxData = 0,
-	    int64_t expiry = 0)
+	    const TxLimits& limits = {})
 	{
-		const MintNftFeeOptions fees = feeOptions ? *feeOptions : MintNftFeeOptions();
-		const uint64_t maxGas = fees.CalculateMaxGas(numTokens);
-		const int64_t effectiveExpiry = (expiry == 0) ? GetDefaultExpiry() : expiry;
-		if( numTokens != 0 && tokens == nullptr )
+		if( numTokens == 0 )
+		{
+			PHANTASMA_EXCEPTION("tokens must not be empty");
+		}
+		if( tokens == nullptr )
 		{
 			PHANTASMA_EXCEPTION("tokens is required when numTokens > 0");
 		}
@@ -363,9 +318,7 @@ struct MintPhantasmaNonFungibleTxHelper {
 		env.buffers.push_back(argsBuffer);
 
 		env.msg.type = phantasma::carbon::Blockchain::TxTypes::Call;
-		env.msg.expiry = effectiveExpiry;
-		env.msg.maxGas = maxGas;
-		env.msg.maxData = maxData;
+		TxLimitsDetail::Apply(env.msg, limits);
 		env.msg.gasFrom = senderPublicKey;
 		env.msg.payload = SmallString();
 		env.msg.call = phantasma::carbon::Blockchain::TxMsgCall{
@@ -382,11 +335,9 @@ struct MintPhantasmaNonFungibleTxHelper {
 	    const Bytes32& senderPublicKey,
 	    const Bytes32& receiverPublicKey,
 	    const std::vector<PhantasmaNftMintInfo>& tokens,
-	    const MintNftFeeOptions* feeOptions = nullptr,
-	    uint64_t maxData = 0,
-	    int64_t expiry = 0)
+	    const TxLimits& limits = {})
 	{
-		return BuildTx(tokenId, senderPublicKey, receiverPublicKey, (uint32_t)tokens.size(), tokens.empty() ? nullptr : &tokens.front(), feeOptions, maxData, expiry);
+		return BuildTx(tokenId, senderPublicKey, receiverPublicKey, (uint32_t)tokens.size(), tokens.empty() ? nullptr : &tokens.front(), limits);
 	}
 
 	static std::vector<PhantasmaNftMintResult> ParseResult(const std::string& resultHex)

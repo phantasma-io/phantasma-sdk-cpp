@@ -804,6 +804,61 @@ inline ByteArray SerializeTx(const TxMsg& msg)
 	return buffer;
 }
 
+// Returns true, with the number of witnesses in `out`, for the message types whose witness set the
+// message itself fixes. It returns false for the witness-array types, which are Call, Call_Multi,
+// Trade and Phantasma. The caller chooses the witnesses of those four, and nothing in the message
+// says how many there will be.
+inline bool RequiredWitnessCount(TxTypes type, uint32_t& out)
+{
+	switch( type )
+	{
+	case TxTypes::TransferFungible:
+	case TxTypes::TransferNonFungible_Single:
+	case TxTypes::TransferNonFungible_Multi:
+	case TxTypes::MintFungible:
+	case TxTypes::BurnFungible:
+	case TxTypes::MintNonFungible:
+	case TxTypes::BurnNonFungible:
+		out = 1;
+		return true;
+	case TxTypes::TransferFungible_GasPayer:
+	case TxTypes::TransferNonFungible_Single_GasPayer:
+	case TxTypes::TransferNonFungible_Multi_GasPayer:
+	case TxTypes::BurnFungible_GasPayer:
+	case TxTypes::BurnNonFungible_GasPayer:
+		out = 2;
+		return true;
+	case TxTypes::Phantasma_Raw:
+		out = 0;
+		return true;
+	default:
+		return false;
+	}
+}
+
+// Returns the size in bytes of `msg` once signed. That is the envelope the block carries and gas
+// model v2 bills. No key is needed, because signatures are fixed-width: the size follows from the
+// serialized message and the witness layout of its type.
+//
+// The witness layout differs by type. The native transaction types append bare 64-byte signatures.
+// The call, trade and script types append a length-prefixed array of entries, each a 32-byte address
+// plus a 64-byte signature. A raw Gen2 envelope carries its signatures inside itself.
+//
+// `witnessCount` is used only by the witness-array types. For every other type the message fixes the
+// count and this argument is ignored.
+inline uint32_t EnvelopeBytes(const TxMsg& msg, uint32_t witnessCount)
+{
+	const size_t messageBytes = SerializeTx(msg).size();
+	uint32_t required = 0;
+	if( RequiredWitnessCount(msg.type, required) )
+	{
+		if( msg.type == TxTypes::Phantasma_Raw )
+			return (uint32_t)messageBytes;
+		return (uint32_t)(messageBytes + (size_t)Bytes64::length * required);
+	}
+	return (uint32_t)(messageBytes + 4 + (size_t)(Bytes32::length + Bytes64::length) * witnessCount);
+}
+
 struct TxMsgSigner {
 	static ByteArray SignAndSerialize(const TxMsg& msg, const PhantasmaKeys& keys)
 	{

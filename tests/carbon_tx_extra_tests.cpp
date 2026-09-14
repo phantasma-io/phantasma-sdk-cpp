@@ -66,54 +66,44 @@ void RunCarbonTxExtraTests(TestContext& ctx)
 		Report(ctx, got == expected, "TxMsg MintFungible vector", got + " vs " + expected);
 	}
 
-	ExpectThrowContains(ctx, "MintPhantasmaNonFungibleTxHelper rejects null tokens pointer", "tokens is required", [&]()
-	    { (void)MintPhantasmaNonFungibleTxHelper::BuildTx(
-		      42,
-		      senderPub,
-		      receiverPub,
-		      1,
-		      nullptr,
-		      nullptr,
-		      0,
-		      expiry); });
-
-	ExpectThrowContains(ctx, "MintPhantasmaNonFungibleTxHelper rejects zero-count mint", "count must be positive", [&]()
-	    { (void)MintPhantasmaNonFungibleTxHelper::BuildTx(
-		      42,
-		      senderPub,
-		      receiverPub,
-		      0,
-		      nullptr,
-		      nullptr,
-		      0,
-		      expiry); });
-
 	{
-		FeeOptions baseFees(10, 1000);
-		Report(ctx, baseFees.CalculateMaxGas() == 10000 && baseFees.CalculateMaxGas(3) == 30000, "FeeOptions count scaling");
+		TxLimits limits{};
+		limits.expiry = expiry;
+		ExpectThrowContains(ctx, "MintPhantasmaNonFungibleTxHelper rejects null tokens pointer", "tokens is required", [&]()
+		    { (void)MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 1, nullptr, limits); });
+		ExpectThrowContains(ctx, "MintPhantasmaNonFungibleTxHelper rejects zero-count mint", "must not be empty", [&]()
+		    { (void)MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 0, nullptr, limits); });
+	}
 
-		CreateSeriesFeeOptions seriesFees(10, 20, 30);
-		Report(ctx, seriesFees.CalculateMaxGas() == 900 && seriesFees.CalculateMaxGas(1) == 900, "CreateSeriesFeeOptions accepts count 1 only");
-		ExpectThrowContains(ctx, "CreateSeriesFeeOptions rejects count > 1", "not count-sensitive", [&]()
-		    { (void)seriesFees.CalculateMaxGas(2); });
-
-		MintNftFeeOptions mintFees(10, 1000);
-		Report(ctx, mintFees.CalculateMaxGas() == 10000 && mintFees.CalculateMaxGas(3) == 30000, "MintNftFeeOptions count scaling");
-
+	// A builder carries no prices: the offer stays zero until the message is planned, and the
+	// caller's own limits are written through unchanged.
+	{
 		PhantasmaNftMintInfo tokens[3]{};
 		tokens[0].phantasmaSeriesId.x() = intx((uint64_t)1);
 		tokens[1].phantasmaSeriesId.x() = intx((uint64_t)2);
 		tokens[2].phantasmaSeriesId.x() = intx((uint64_t)3);
-		const TxEnvelope env = MintPhantasmaNonFungibleTxHelper::BuildTx(
-		    42,
-		    senderPub,
-		    receiverPub,
-		    3,
-		    tokens,
-		    &mintFees,
-		    0,
-		    expiry);
-		Report(ctx, env.msg.maxGas == 30000, "MintPhantasmaNonFungibleTxHelper scales max gas by token count");
+
+		const TxEnvelope unplanned = MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 3, tokens);
+		Report(ctx, unplanned.msg.maxGas == 0 && unplanned.msg.maxData == 0,
+		    "a builder leaves the message unplanned");
+		Report(ctx, unplanned.msg.expiry > UnixTimeMs() && unplanned.msg.expiry <= UnixTimeMs() + DefaultExpiryMs,
+		    "a builder stamps the default expiry");
+
+		TxLimits limits{};
+		limits.maxGas = 30000;
+		limits.maxData = 123;
+		limits.expiry = expiry;
+		const TxEnvelope planned = MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 3, tokens, limits);
+		Report(ctx, planned.msg.maxGas == 30000 && planned.msg.maxData == 123 && planned.msg.expiry == expiry,
+		    "a builder writes the limits it was given");
+	}
+
+	// The chain refuses an expiry at or beyond now + expiryWindow, so the whole window is available
+	// only less a margin for the clock it is compared against.
+	{
+		const int64_t within = ExpiryWithin(3600000, 5000);
+		Report(ctx, within > UnixTimeMs() + 3590000 && within <= UnixTimeMs() + 3595000,
+		    "ExpiryWithin takes the chain window less the margin");
 	}
 
 	ExpectNoThrow(ctx, "MintPhantasmaNonFungibleTxHelper ParseResult preserves exact 32-byte Phantasma ids", [&]()

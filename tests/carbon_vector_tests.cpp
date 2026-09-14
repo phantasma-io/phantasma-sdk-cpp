@@ -556,8 +556,10 @@ void DecodeTests(TestContext& ctx, const std::vector<Row>& rows)
 
 				if( fieldsOk )
 				{
-					CreateTokenFeeOptions fees(10000, 10000000000ULL, 10000000000ULL, 10000);
-					fieldsOk = msg.maxGas == fees.CalculateMaxGas(tokenInfo.symbol);
+					// The vector was produced before builders stopped carrying prices. Its offer is
+					// the number that SDK computed for a five-character symbol, and it is pinned
+					// here so the decode still checks the field it carries.
+					fieldsOk = msg.maxGas == (10000ull + 10000000000ull + (10000000000ull >> 4)) * 10000ull;
 				}
 			}
 
@@ -606,8 +608,7 @@ void DecodeTests(TestContext& ctx, const std::vector<Row>& rows)
 
 				if( fieldsOk )
 				{
-					CreateSeriesFeeOptions fees(10000, 2500000000ULL, 10000);
-					fieldsOk = msg.maxGas == fees.CalculateMaxGas();
+					fieldsOk = msg.maxGas == (10000ull + 2500000000ull) * 10000ull;
 				}
 			}
 
@@ -648,8 +649,7 @@ void DecodeTests(TestContext& ctx, const std::vector<Row>& rows)
 
 			if( fieldsOk )
 			{
-				MintNftFeeOptions fees(10000, 1000);
-				fieldsOk = msg.maxGas == fees.CalculateMaxGas();
+				fieldsOk = msg.maxGas == 10000ull * 1000ull;
 			}
 
 			Report(ctx, fieldsOk, "decode TX-MINT-NON-FUNGIBLE");

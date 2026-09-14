@@ -26,6 +26,8 @@
 #include "../../include/Carbon/Carbon.h"
 #include "../../include/Carbon/DataBlockchain.h"
 #include "../../include/Carbon/Tx.h"
+#include "../../include/Carbon/FeePlan.h"
+#include "../../include/Carbon/FeePlanSummary.h"
 #include "../../include/Blockchain/Transaction.h"
 #include "../../include/Domain/Event.h"
 #include "../../include/Cryptography/KeyPair.h"
@@ -321,7 +323,9 @@ class Program
 							WriteLine("Metadata:");
 							for( const auto& prop : tokenInfo->metadata )
 							{
-								WriteLine("\t", prop.key.c_str(), ": ", prop.value.c_str());
+								// A property value is a VM value now: a scalar, an array or a struct. Only
+								// a scalar has text of its own.
+								WriteLine("\t", prop.key.c_str(), ": ", prop.value.Text().c_str());
 							}
 						}
 						if( !tokenInfo->series.empty() )
@@ -338,7 +342,7 @@ class Program
 								{
 									for( const auto& prop : series.metadata )
 									{
-										WriteLine("\t\t", prop.key.c_str(), ": ", prop.value.c_str());
+										WriteLine("\t\t", prop.key.c_str(), ": ", prop.value.Text().c_str());
 									}
 								}
 							}
@@ -554,15 +558,9 @@ class Program
 
 		const Address destination = Address::FromText(destinationAddress);
 
-		const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-		    std::chrono::system_clock::now().time_since_epoch())
-		                       .count();
-
 		cbc::TxMsg msg;
 		msg.type = cbc::TxTypes::TransferFungible;
-		msg.expiry = static_cast<int64_t>(nowMs + 60LL * 1000LL);
-		msg.maxGas = carbon::FeeOptions().CalculateMaxGas();
-		msg.maxData = 0;
+		msg.expiry = carbon::DefaultExpiry();
 		msg.gasFrom = carbon::Bytes32(_key.GetPublicKey());
 		msg.payload = carbon::SmallString();
 		msg.transferFt = cbc::TxMsgTransferFungible{
@@ -570,6 +568,27 @@ class Program
 			carbonTokenId,
 			amount
 		};
+
+		// The offer and the storage ceiling come from the chain's own prices. Under gas model v2
+		// every envelope byte is billed, so no fixed number predicts what this transfer costs.
+		rpc::PhantasmaError gasErr{};
+		const rpc::GasConfigResult gas = _phantasmaApiService.GetGasConfig(&gasErr);
+		if( gasErr.code != 0 )
+		{
+			WriteLine("Failed to read the chain gas config: ", gasErr.message.c_str());
+			return;
+		}
+		carbon::FeePlanOptions planOptions;
+		planOptions.infusionsRead = true; // a transfer burns nothing
+		carbon::FeePlan plan;
+		if( !carbon::PlanFees(msg, carbon::ToGasConfig(gas.gasConfig), planOptions, plan) )
+		{
+			WriteLine("Failed to plan the transaction fee");
+			return;
+		}
+		msg = plan.Apply(msg);
+		const carbon::FeePlanSummary fee = carbon::SummarizeFeePlan(plan);
+		WriteLine("Fee: ", (plan.exact ? "" : "up to "), fee.gasBill.c_str(), " KCAL, deposit ", fee.storageCeiling.c_str(), " SOUL");
 
 		String txHash;
 		if( TrySendCarbonTransaction(msg, _key, txHash) )
