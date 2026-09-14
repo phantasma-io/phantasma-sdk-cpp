@@ -132,51 +132,6 @@ bool ReadSeriesInfo(SeriesInfo& out, ReadView& reader, Allocator& alloc)
 	return Read(out.rom, reader, alloc) && Read(out.ram, reader, alloc);
 }
 
-// Test-only decoder: TxMsg has no Read() overload, so decode the wire layout using existing primitives.
-bool ReadTxMsg(Blockchain::TxMsg& out, ReadView& reader, Allocator& alloc, ByteArray* romStorage, ByteArray* ramStorage)
-{
-	out.type = (Blockchain::TxTypes)Read1(reader);
-	out.expiry = Read8(reader);
-	out.maxGas = Read8u(reader);
-	out.maxData = Read8u(reader);
-	if( !Read(out.gasFrom, reader) || !Read(out.payload, reader) )
-	{
-		return false;
-	}
-
-	switch( out.type )
-	{
-	case Blockchain::TxTypes::TransferFungible:
-		if( !Read(out.transferFt.to, reader) )
-		{
-			return false;
-		}
-		out.transferFt.tokenId = Read8u(reader);
-		out.transferFt.amount = Read8u(reader);
-		return true;
-	case Blockchain::TxTypes::Call:
-		return Read(out.call, reader, alloc);
-	case Blockchain::TxTypes::MintNonFungible:
-		if( !romStorage || !ramStorage )
-		{
-			return false;
-		}
-		out.mintNonFungible.tokenId = Read8u(reader);
-		if( !Read(out.mintNonFungible.to, reader) )
-		{
-			return false;
-		}
-		out.mintNonFungible.seriesId = Read4u(reader);
-		*romStorage = ReadArray(reader);
-		*ramStorage = ReadArray(reader);
-		out.mintNonFungible.rom = ByteView{ romStorage->data(), romStorage->size() };
-		out.mintNonFungible.ram = ByteView{ ramStorage->data(), ramStorage->size() };
-		return true;
-	default:
-		return false;
-	}
-}
-
 void EncodeTests(TestContext& ctx, const std::vector<Row>& rows)
 {
 	const std::vector<std::string> skipKinds = {
@@ -477,7 +432,7 @@ void DecodeTests(TestContext& ctx, const std::vector<Row>& rows)
 		{
 			Allocator alloc;
 			Blockchain::TxMsg msg{};
-			const bool decoded = ReadTxMsg(msg, r, alloc, nullptr, nullptr);
+			const bool decoded = Read(msg, r, alloc);
 			const bool fieldsOk = decoded && msg.type == Blockchain::TxTypes::TransferFungible && msg.expiry == 1759711416000LL && msg.maxGas == 10000000 && msg.maxData == 1000 && msg.gasFrom == Bytes32() && msg.payload == SmallString("test-payload") && msg.transferFt.to == Bytes32() && msg.transferFt.tokenId == 1 && msg.transferFt.amount == 100000000;
 			Report(ctx, fieldsOk, "decode TX1");
 			if( fieldsOk )
@@ -498,7 +453,7 @@ void DecodeTests(TestContext& ctx, const std::vector<Row>& rows)
 
 			Allocator alloc;
 			Blockchain::TxMsg msg{};
-			const bool decoded = ReadTxMsg(msg, r, alloc, nullptr, nullptr);
+			const bool decoded = Read(msg, r, alloc);
 			Bytes64 sig{};
 			const bool sigOk = decoded && Read(sig, r);
 			const bool fieldsOk = sigOk && msg.type == Blockchain::TxTypes::TransferFungible && msg.expiry == 1759711416000LL && msg.maxGas == 10000000 && msg.maxData == 1000 && msg.gasFrom == ToBytes32(senderKey) && msg.payload == SmallString("test-payload") && msg.transferFt.to == ToBytes32(receiverKey) && msg.transferFt.tokenId == 1 && msg.transferFt.amount == 100000000;
@@ -523,7 +478,7 @@ void DecodeTests(TestContext& ctx, const std::vector<Row>& rows)
 
 			Allocator alloc;
 			Blockchain::TxMsg msg{};
-			const bool decoded = ReadTxMsg(msg, r, alloc, nullptr, nullptr);
+			const bool decoded = Read(msg, r, alloc);
 			const bool baseOk = decoded && msg.type == Blockchain::TxTypes::Call && msg.expiry == 1759711416000LL && msg.maxData == 100000000 && msg.gasFrom == senderPub && msg.payload == SmallString("");
 
 			const bool callOk = baseOk && msg.call.moduleId == (uint32_t)ModuleId::Token && msg.call.methodId == (uint32_t)TokenContract_Methods::CreateToken && msg.call.args.length > 0;
@@ -579,7 +534,7 @@ void DecodeTests(TestContext& ctx, const std::vector<Row>& rows)
 
 			Allocator alloc;
 			Blockchain::TxMsg msg{};
-			const bool decoded = ReadTxMsg(msg, r, alloc, nullptr, nullptr);
+			const bool decoded = Read(msg, r, alloc);
 			const bool baseOk = decoded && msg.type == Blockchain::TxTypes::Call && msg.expiry == 1759711416000LL && msg.maxData == 100000000 && msg.gasFrom == senderPub && msg.payload == SmallString("");
 
 			const bool callOk = baseOk && msg.call.moduleId == (uint32_t)ModuleId::Token && msg.call.methodId == (uint32_t)TokenContract_Methods::CreateTokenSeries && msg.call.args.length > 0;
@@ -626,11 +581,9 @@ void DecodeTests(TestContext& ctx, const std::vector<Row>& rows)
 			const ByteArray senderKey = sender.GetPublicKey();
 			const Bytes32 senderPub = ToBytes32(senderKey);
 
-			ByteArray romStorage;
-			ByteArray ramStorage;
 			Allocator alloc;
 			Blockchain::TxMsg msg{};
-			const bool decoded = ReadTxMsg(msg, r, alloc, &romStorage, &ramStorage);
+			const bool decoded = Read(msg, r, alloc);
 			const bool baseOk = decoded && msg.type == Blockchain::TxTypes::MintNonFungible && msg.expiry == 1759711416000LL && msg.maxData == 100000000 && msg.gasFrom == senderPub && msg.payload == SmallString("");
 
 			bool fieldsOk = baseOk;

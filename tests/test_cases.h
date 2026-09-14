@@ -33,6 +33,7 @@ void RunTokenBuilderValidationTests(testutil::TestContext& ctx);
 void RunEncodingRoundtripTests(testutil::TestContext& ctx);
 void RunKeyPairTests(testutil::TestContext& ctx);
 void RunCarbonTxExtraTests(testutil::TestContext& ctx);
+void RunTxReaderTests(testutil::TestContext& ctx);
 void RunGasConfigFeeTests(testutil::TestContext& ctx);
 void RunFeePlanTests(testutil::TestContext& ctx);
 void RunExtendedEventTests(testutil::TestContext& ctx);

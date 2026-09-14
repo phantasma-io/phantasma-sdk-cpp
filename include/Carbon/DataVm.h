@@ -406,7 +406,11 @@ inline void WriteArray(uint32_t length, const Bytes64* items, WriteView& writer)
 
 inline bool ReadArrayLength(uint32_t& length, ReadView& reader, size_t elementSize = 1)
 {
-	const int32_t len = Read4(reader);
+	int32_t len = 0;
+	if( !Read(len, reader) )
+	{
+		return false;
+	}
 	if( len < 0 || elementSize == 0 )
 	{
 		return false;

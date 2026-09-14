@@ -397,7 +397,11 @@ inline bool Read(GasConfig& out, ReadView& r)
 inline bool Read(MsgCallArgs& out, ReadView& reader, Allocator& alloc)
 {
 	const Byte* mark = (const Byte*)reader.Mark();
-	const int32_t value = Read4(reader);
+	int32_t value = 0;
+	if( !Read(value, reader) )
+	{
+		return false;
+	}
 	if( value >= 0 )
 	{
 		reader.Rewind(mark);
@@ -411,7 +415,11 @@ inline bool Read(MsgCallArgs& out, ReadView& reader, Allocator& alloc)
 
 inline bool Read(MsgCallArgSections& out, ReadView& reader, Allocator& alloc)
 {
-	const int32_t count = Read4(reader);
+	int32_t count = 0;
+	if( !Read(count, reader) )
+	{
+		return false;
+	}
 	if( count >= 0 || count == std::numeric_limits<int32_t>::min() )
 	{
 		return false;
@@ -445,10 +453,16 @@ inline bool Read(TxMsgCall& out, ReadView& reader, Allocator& alloc)
 	out.sections.argSections = nullptr;
 	out.sections.numArgSections_negative = 0;
 
-	out.moduleId = (uint32_t)Read4(reader);
-	out.methodId = (uint32_t)Read4(reader);
+	if( !(Read(out.moduleId, reader) && Read(out.methodId, reader)) )
+	{
+		return false;
+	}
 	const Byte* mark = (const Byte*)reader.Mark();
-	const int32_t len = Read4(reader);
+	int32_t len = 0;
+	if( !Read(len, reader) )
+	{
+		return false;
+	}
 	reader.Rewind(mark);
 	if( len >= 0 )
 	{
@@ -466,6 +480,194 @@ inline bool Read(TxMsgCall_Multi& out, ReadView& reader, Allocator& alloc)
 inline bool Read(TxMsgSpecialResolution& out, ReadView& reader, Allocator& alloc)
 {
 	return Read(out.resolutionId, reader) && Read(out.calls, reader, alloc);
+}
+
+// The payload readers below mirror the Write of the same type, field for field, and answer false on
+// a truncated or malformed image. They use the fallible Read overloads throughout: Read1, Read4 and
+// Read8 report the end of the stream through Throw::If, which does nothing when the SDK is built
+// without exceptions, and a reader that cannot fail would hand the caller invented fields.
+inline bool Read(TxMsgTransferFungible& out, ReadView& r)
+{
+	return Read(out.to, r) && Read(out.tokenId, r) && Read(out.amount, r);
+}
+
+inline bool Read(TxMsgTransferFungible_GasPayer& out, ReadView& r)
+{
+	return Read(out.to, r) && Read(out.from, r) && Read(out.tokenId, r) && Read(out.amount, r);
+}
+
+inline bool Read(TxMsgTransferNonFungible_Single& out, ReadView& r)
+{
+	return Read(out.to, r) && Read(out.tokenId, r) && Read(out.instanceId, r);
+}
+
+inline bool Read(TxMsgTransferNonFungible_Single_GasPayer& out, ReadView& r)
+{
+	return Read(out.to, r) && Read(out.from, r) && Read(out.tokenId, r) && Read(out.instanceId, r);
+}
+
+// Reads the instance id list of a multi-instance transfer. ReadArray bounds the declared count
+// against the bytes that remain before it allocates, so a crafted count cannot ask for a huge
+// buffer.
+inline bool ReadInstanceIds(uint32_t& numInstanceIds, const uint64_t*& instanceIds, ReadView& r, Allocator& alloc)
+{
+	uint64_t* ids = nullptr;
+	const bool ok = ReadArray(
+	    numInstanceIds, ids, r, alloc, [](uint64_t& id, ReadView& reader)
+	    { return Read(id, reader); }, sizeof(uint64_t));
+	instanceIds = ids;
+	return ok;
+}
+
+inline bool Read(TxMsgTransferNonFungible_Multi& out, ReadView& r, Allocator& alloc)
+{
+	return Read(out.to, r) && Read(out.tokenId, r) && ReadInstanceIds(out.numInstanceIds, out.instanceIds, r, alloc);
+}
+
+inline bool Read(TxMsgTransferNonFungible_Multi_GasPayer& out, ReadView& r, Allocator& alloc)
+{
+	return Read(out.to, r) && Read(out.from, r) && Read(out.tokenId, r) &&
+	       ReadInstanceIds(out.numInstanceIds, out.instanceIds, r, alloc);
+}
+
+// The address comes before the amount here, and the plain BurnFungible below carries no address at
+// all. Reading these three in the wrong order parses without an error and yields a different token
+// and a different amount, so the order is taken from the Write of each type.
+inline bool Read(TxMsgMintFungible& out, ReadView& r)
+{
+	return Read(out.tokenId, r) && Read(out.to, r) && Read(out.amount.x(), r);
+}
+
+inline bool Read(TxMsgBurnFungible& out, ReadView& r)
+{
+	return Read(out.tokenId, r) && Read(out.amount.x(), r);
+}
+
+inline bool Read(TxMsgBurnFungible_GasPayer& out, ReadView& r)
+{
+	return Read(out.tokenId, r) && Read(out.from, r) && Read(out.amount.x(), r);
+}
+
+inline bool Read(TxMsgMintNonFungible& out, ReadView& r, Allocator& alloc)
+{
+	return Read(out.tokenId, r) && Read(out.to, r) && Read(out.seriesId, r) && ReadArray(out.rom, r, alloc) &&
+	       ReadArray(out.ram, r, alloc);
+}
+
+inline bool Read(TxMsgBurnNonFungible& out, ReadView& r)
+{
+	return Read(out.tokenId, r) && Read(out.instanceId, r);
+}
+
+inline bool Read(TxMsgBurnNonFungible_GasPayer& out, ReadView& r)
+{
+	return Read(out.tokenId, r) && Read(out.from, r) && Read(out.instanceId, r);
+}
+
+// The smallest wire image each element of a trade list can have. The array reader bounds a declared
+// count by the bytes that remain divided by this, so the count of a crafted message cannot allocate
+// past the message itself. An intx is at least a header byte plus eight bytes.
+constexpr size_t MinBytesTradeTransferFungible = Bytes32::length * 2 + 8 + 8;
+constexpr size_t MinBytesTradeTransferNonFungible = Bytes32::length * 2 + 8 + 8;
+constexpr size_t MinBytesTradeMintFungible = 8 + Bytes32::length + 9;
+constexpr size_t MinBytesTradeBurnFungible = 8 + Bytes32::length + 9;
+constexpr size_t MinBytesTradeMintNonFungible = 8 + Bytes32::length + 4 + 4 + 4;
+constexpr size_t MinBytesTradeBurnNonFungible = 8 + Bytes32::length + 8;
+
+inline bool Read(TxMsgTrade& out, ReadView& r, Allocator& alloc)
+{
+	return ReadArray(
+	           out.numTransferF, out.transferF, r, alloc,
+	           [](TxMsgTransferFungible_GasPayer& item, ReadView& reader)
+	           { return Read(item, reader); },
+	           MinBytesTradeTransferFungible) &&
+	       ReadArray(
+	           out.numTransferN, out.transferN, r, alloc,
+	           [](TxMsgTransferNonFungible_Single_GasPayer& item, ReadView& reader)
+	           { return Read(item, reader); },
+	           MinBytesTradeTransferNonFungible) &&
+	       ReadArray(
+	           out.numMintF, out.mintF, r, alloc, [](TxMsgMintFungible& item, ReadView& reader)
+	           { return Read(item, reader); },
+	           MinBytesTradeMintFungible) &&
+	       ReadArray(
+	           out.numBurnF, out.burnF, r, alloc,
+	           [](TxMsgBurnFungible_GasPayer& item, ReadView& reader)
+	           { return Read(item, reader); }, MinBytesTradeBurnFungible) &&
+	       ReadArray(
+	           out.numMintN, out.mintN, r, alloc,
+	           [&alloc](TxMsgMintNonFungible& item, ReadView& reader)
+	           { return Read(item, reader, alloc); },
+	           MinBytesTradeMintNonFungible) &&
+	       ReadArray(
+	           out.numBurnN, out.burnN, r, alloc,
+	           [](TxMsgBurnNonFungible_GasPayer& item, ReadView& reader)
+	           { return Read(item, reader); },
+	           MinBytesTradeBurnNonFungible);
+}
+
+inline bool Read(TxMsgPhantasma& out, ReadView& r, Allocator& alloc)
+{
+	return Read(out.nexus, r) && Read(out.chain, r) && ReadArray(out.script, r, alloc);
+}
+
+inline bool Read(TxMsgPhantasma_Raw& out, ReadView& r, Allocator& alloc)
+{
+	return ReadArray(out.transaction, r, alloc);
+}
+
+// Reads a transaction message: the header every type carries, then the payload of the type the
+// first byte names. Everything the message points at is cloned into `alloc`, so `alloc` must outlive
+// `out`. The input bytes themselves do not.
+inline bool Read(TxMsg& out, ReadView& r, Allocator& alloc)
+{
+	uint8_t type = 0;
+	if( !(Read(type, r) && Read(out.expiry, r) && Read(out.maxGas, r) && Read(out.maxData, r) && Read(out.gasFrom, r) &&
+	        Read(out.payload, r)) )
+	{
+		return false;
+	}
+
+	switch( out.type = (TxTypes)type )
+	{
+	case TxTypes::Call:
+		return Read(out.call, r, alloc);
+	case TxTypes::Call_Multi:
+		return Read(out.callMulti, r, alloc);
+	case TxTypes::Trade:
+		return Read(out.trade, r, alloc);
+	case TxTypes::TransferFungible:
+		return Read(out.transferFt, r);
+	case TxTypes::TransferFungible_GasPayer:
+		return Read(out.transferFtGasPayer, r);
+	case TxTypes::TransferNonFungible_Single:
+		return Read(out.transferNftSingle, r);
+	case TxTypes::TransferNonFungible_Single_GasPayer:
+		return Read(out.transferNftSingleGasPayer, r);
+	case TxTypes::TransferNonFungible_Multi:
+		return Read(out.transferNftMulti, r, alloc);
+	case TxTypes::TransferNonFungible_Multi_GasPayer:
+		return Read(out.transferNftMultiGasPayer, r, alloc);
+	case TxTypes::MintFungible:
+		return Read(out.mintFungible, r);
+	case TxTypes::BurnFungible:
+		return Read(out.burnFungible, r);
+	case TxTypes::BurnFungible_GasPayer:
+		return Read(out.burnFungibleGasPayer, r);
+	case TxTypes::MintNonFungible:
+		return Read(out.mintNonFungible, r, alloc);
+	case TxTypes::BurnNonFungible:
+		return Read(out.burnNonFungible, r);
+	case TxTypes::BurnNonFungible_GasPayer:
+		return Read(out.burnNonFungibleGasPayer, r);
+	case TxTypes::Phantasma:
+		return Read(out.phantasma, r, alloc);
+	case TxTypes::Phantasma_Raw:
+		return Read(out.phantasmaRaw, r, alloc);
+	default:
+		// A type byte the SDK does not know names no payload layout, so the rest cannot be read.
+		return false;
+	}
 }
 
 inline void Write(const TxMsgCall& in, WriteView& w)
@@ -718,6 +920,33 @@ struct SignedTxMsg {
 	Witnesses witnesses{};
 };
 
+// Returns true and the account that owns the assets for a _GasPayer message. Those types are signed
+// twice: the gas payer signs first, this account second. Returns false for every other type, which
+// has no such account.
+inline bool TryGetGasPayerFrom(const TxMsg& msg, Bytes32& out)
+{
+	switch( msg.type )
+	{
+	case TxTypes::TransferFungible_GasPayer:
+		out = msg.transferFtGasPayer.from;
+		return true;
+	case TxTypes::TransferNonFungible_Single_GasPayer:
+		out = msg.transferNftSingleGasPayer.from;
+		return true;
+	case TxTypes::TransferNonFungible_Multi_GasPayer:
+		out = msg.transferNftMultiGasPayer.from;
+		return true;
+	case TxTypes::BurnFungible_GasPayer:
+		out = msg.burnFungibleGasPayer.from;
+		return true;
+	case TxTypes::BurnNonFungible_GasPayer:
+		out = msg.burnNonFungibleGasPayer.from;
+		return true;
+	default:
+		return false;
+	}
+}
+
 inline void Write(const SignedTxMsg& signedMsg, WriteView& w)
 {
 	Write(signedMsg.msg, w);
@@ -742,27 +971,8 @@ inline void Write(const SignedTxMsg& signedMsg, WriteView& w)
 	case TxTypes::TransferNonFungible_Multi_GasPayer:
 	case TxTypes::BurnFungible_GasPayer:
 	case TxTypes::BurnNonFungible_GasPayer: {
-		Bytes32 from;
-		switch( type )
-		{
-		case TxTypes::TransferFungible_GasPayer:
-			from = signedMsg.msg.transferFtGasPayer.from;
-			break;
-		case TxTypes::TransferNonFungible_Single_GasPayer:
-			from = signedMsg.msg.transferNftSingleGasPayer.from;
-			break;
-		case TxTypes::TransferNonFungible_Multi_GasPayer:
-			from = signedMsg.msg.transferNftMultiGasPayer.from;
-			break;
-		case TxTypes::BurnFungible_GasPayer:
-			from = signedMsg.msg.burnFungibleGasPayer.from;
-			break;
-		case TxTypes::BurnNonFungible_GasPayer:
-			from = signedMsg.msg.burnNonFungibleGasPayer.from;
-			break;
-		default:
-			break;
-		}
+		Bytes32 from{};
+		Throw::Assert(TryGetGasPayerFrom(signedMsg.msg, from), "invalid witness");
 		Throw::Assert(witnessList.numWitnesses == 2 &&
 		                  witnessList.witnesses &&
 		                  witnessList.witnesses[0].address == signedMsg.msg.gasFrom &&
@@ -857,6 +1067,79 @@ inline uint32_t EnvelopeBytes(const TxMsg& msg, uint32_t witnessCount)
 		return (uint32_t)(messageBytes + (size_t)Bytes64::length * required);
 	}
 	return (uint32_t)(messageBytes + 4 + (size_t)(Bytes32::length + Bytes64::length) * witnessCount);
+}
+
+// Reads a signed transaction envelope: the message, then the witnesses in the layout its type uses.
+// Write(const SignedTxMsg&) writes the three layouts this reads back.
+//
+// `outSignedPortion` is the part of the input a signature is made over. It points into the input
+// bytes, so the caller must keep them alive for as long as it uses that view. Everything else the
+// message points at is cloned into `alloc`.
+inline bool Read(TxMsg& outMsg, Witnesses& outWitnesses, ByteView& outSignedPortion, ReadView& r, Allocator& alloc)
+{
+	const Byte* begin = r.bytes;
+	if( !Read(outMsg, r, alloc) )
+	{
+		return false;
+	}
+	outSignedPortion = ByteView{ begin, (size_t)(r.bytes - begin) };
+
+	uint32_t required = 0;
+	if( !RequiredWitnessCount(outMsg.type, required) )
+	{
+		// Call, Call_Multi, Trade and Phantasma carry a counted array of address plus signature.
+		uint32_t count = 0;
+		Witness* list = nullptr;
+		const bool ok = ReadArray(
+		    count, list, r, alloc,
+		    [](Witness& witness, ReadView& reader)
+		    { return Read(witness.address, reader) && Read(witness.signature, reader); },
+		    Bytes32::length + Bytes64::length);
+		outWitnesses = Witnesses{ count, list };
+		return ok;
+	}
+
+	if( required == 0 )
+	{
+		// A raw Gen2 envelope carries its signatures inside its own payload.
+		outWitnesses = Witnesses{ 0, nullptr };
+		return true;
+	}
+
+	// The other types append bare signatures, and the message itself names the signers: the gas
+	// payer first, then the account that owns the assets when the type has one.
+	Witness* list = alloc.Alloc<Witness>(required);
+	list[0].address = outMsg.gasFrom;
+	if( required > 1 && !TryGetGasPayerFrom(outMsg, list[1].address) )
+	{
+		return false;
+	}
+	for( uint32_t i = 0; i != required; ++i )
+	{
+		if( !Read(list[i].signature, r) )
+		{
+			return false;
+		}
+	}
+	outWitnesses = Witnesses{ required, list };
+	return true;
+}
+
+// Reads a transaction message from `bytes`. Returns false if the image is truncated, if its type
+// byte is unknown, or if a field does not fit. `alloc` must outlive `out`.
+inline bool ParseTx(TxMsg& out, const ByteView& bytes, Allocator& alloc)
+{
+	ReadView r(bytes, alloc, ReadView::InPlace);
+	return Read(out, r, alloc);
+}
+
+// Reads a signed transaction envelope from `bytes`, the shape TxMsgSigner::SignAndSerialize
+// produces and the chain accepts. `outSignedPortion` points into `bytes`, so `bytes` must outlive
+// it, and `alloc` must outlive `out`.
+inline bool ParseSignedTx(SignedTxMsg& out, ByteView& outSignedPortion, const ByteView& bytes, Allocator& alloc)
+{
+	ReadView r(bytes, alloc, ReadView::InPlace);
+	return Read(out.msg, out.witnesses, outSignedPortion, r, alloc);
 }
 
 struct TxMsgSigner {

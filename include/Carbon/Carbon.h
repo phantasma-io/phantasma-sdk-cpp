@@ -376,14 +376,21 @@ inline void Write(const SmallString& s, WriteView& w)
 		WriteBytes((const Byte*)s.bytes, s.length, w);
 	}
 }
+// Reads a length-prefixed string. Returns false when the length byte or the characters run past the
+// end of the stream. A reader that cannot report that hands the caller characters nobody wrote, and
+// `length` and `bytes` are only set when the whole string was read.
 inline bool Read(SmallString& s, ReadView& r)
 {
-	const uint8_t len = Read1(r);
-	s.length = len;
-	if( len )
+	uint8_t len = 0;
+	if( !r.ReadBytes(len) )
 	{
-		Throw::If(!r.ReadBytes(s.bytes, len), "end of stream reached");
+		return false;
 	}
+	if( len && !r.ReadBytes(s.bytes, len) )
+	{
+		return false;
+	}
+	s.length = len;
 	s.bytes[len] = 0;
 	return true;
 }
@@ -415,46 +422,18 @@ inline void Write(const Bytes32& v, WriteView& w) { WriteExactly((const Byte*)v.
 inline void Write(const Bytes64& v, WriteView& w) { WriteExactly((const Byte*)v.bytes, Bytes64::length, w); }
 inline void Write(ByteView v, WriteView&& w) { Write(v, w); }
 
-inline bool Read(uint8_t& out, ReadView& r)
-{
-	out = Read1(r);
-	return true;
-}
-inline bool Read(int8_t& out, ReadView& r)
-{
-	out = (int8_t)Read1(r);
-	return true;
-}
-inline bool Read(uint16_t& out, ReadView& r)
-{
-	out = (uint16_t)Read2(r);
-	return true;
-}
-inline bool Read(int16_t& out, ReadView& r)
-{
-	out = Read2(r);
-	return true;
-}
-inline bool Read(uint32_t& out, ReadView& r)
-{
-	out = (uint32_t)Read4(r);
-	return true;
-}
-inline bool Read(int32_t& out, ReadView& r)
-{
-	out = Read4(r);
-	return true;
-}
-inline bool Read(uint64_t& out, ReadView& r)
-{
-	out = (uint64_t)Read8(r);
-	return true;
-}
-inline bool Read(int64_t& out, ReadView& r)
-{
-	out = Read8(r);
-	return true;
-}
+// These report the end of the stream through their answer. Read1, Read2, Read4 and Read8 report it
+// through Throw::If, which does nothing when the SDK is built without exceptions, and they return a
+// zero the caller cannot tell from a zero that was really there. Every reader that has to refuse a
+// truncated image takes this family instead.
+inline bool Read(uint8_t& out, ReadView& r) { return r.ReadBytes(out); }
+inline bool Read(int8_t& out, ReadView& r) { return r.ReadBytes(out); }
+inline bool Read(uint16_t& out, ReadView& r) { return r.ReadBytes(out); }
+inline bool Read(int16_t& out, ReadView& r) { return r.ReadBytes(out); }
+inline bool Read(uint32_t& out, ReadView& r) { return r.ReadBytes(out); }
+inline bool Read(int32_t& out, ReadView& r) { return r.ReadBytes(out); }
+inline bool Read(uint64_t& out, ReadView& r) { return r.ReadBytes(out); }
+inline bool Read(int64_t& out, ReadView& r) { return r.ReadBytes(out); }
 inline bool Read(Bytes16& out, ReadView& r) { return r.ReadBytes(out.bytes, Bytes16::length); }
 inline bool Read(Bytes32& out, ReadView& r) { return r.ReadBytes(out.bytes, Bytes32::length); }
 inline bool Read(Bytes64& out, ReadView& r) { return r.ReadBytes(out.bytes, Bytes64::length); }
