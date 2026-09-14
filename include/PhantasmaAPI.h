@@ -77,14 +77,19 @@
 //     void PhantasmaJsonAPI::MakeGetNFTsRequest(JSONBuilder, symbol, IDtext, extended);
 //     bool PhantasmaJsonAPI::ParseGetNFTsResponse(JSONValue, vector<TokenData>);
 //     void PhantasmaJsonAPI::MakeGetTokenBalanceRequest(JSONBuilder, account, tokenSymbol, chainInput);
+//     void PhantasmaJsonAPI::MakeGetTokenBalanceRequest(JSONBuilder, account, tokenSymbol, chainInput, checkAddressReservedByte, addressType);
 //     bool PhantasmaJsonAPI::ParseGetTokenBalanceResponse(JSONValue, Balance);
 //     void PhantasmaJsonAPI::MakeGetAccountFungibleTokensRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte);
+//     void PhantasmaJsonAPI::MakeGetAccountFungibleTokensRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType);
 //     bool PhantasmaJsonAPI::ParseGetAccountFungibleTokensResponse(JSONValue, CursorPaginatedResult<Balance>);
 //     void PhantasmaJsonAPI::MakeGetAccountNFTsRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, carbonSeriesId, pageSize, cursor, extended, checkAddressReservedByte);
+//     void PhantasmaJsonAPI::MakeGetAccountNFTsRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, carbonSeriesId, pageSize, cursor, extended, checkAddressReservedByte, addressType);
 //     bool PhantasmaJsonAPI::ParseGetAccountNFTsResponse(JSONValue, CursorPaginatedResult<TokenData>);
 //     void PhantasmaJsonAPI::MakeGetAccountOwnedTokensRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte);
+//     void PhantasmaJsonAPI::MakeGetAccountOwnedTokensRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType);
 //     bool PhantasmaJsonAPI::ParseGetAccountOwnedTokensResponse(JSONValue, CursorPaginatedResult<Token>);
 //     void PhantasmaJsonAPI::MakeGetAccountOwnedTokenSeriesRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte);
+//     void PhantasmaJsonAPI::MakeGetAccountOwnedTokenSeriesRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType);
 //     bool PhantasmaJsonAPI::ParseGetAccountOwnedTokenSeriesResponse(JSONValue, CursorPaginatedResult<TokenSeries>);
 //     void PhantasmaJsonAPI::MakeGetAuctionsCountRequest(JSONBuilder, chainAddressOrName, symbol);
 //     bool PhantasmaJsonAPI::ParseGetAuctionsCountResponse(JSONValue, Int32);
@@ -152,10 +157,15 @@
 //     TokenData = phantasmaAPI.GetNFT(symbol, IDtext, extended, error);
 //     vector<TokenData> = phantasmaAPI.GetNFTs(symbol, IDtext, extended, error);
 //     Balance = phantasmaAPI.GetTokenBalance(account, tokenSymbol, chainInput, error);
+//     Balance = phantasmaAPI.GetTokenBalance(account, tokenSymbol, chainInput, checkAddressReservedByte, addressType, error);
 //     CursorPaginatedResult<Balance> = phantasmaAPI.GetAccountFungibleTokens(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, error);
+//     CursorPaginatedResult<Balance> = phantasmaAPI.GetAccountFungibleTokens(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType, error);
 //     CursorPaginatedResult<TokenData> = phantasmaAPI.GetAccountNFTs(account, tokenSymbol, carbonTokenId, carbonSeriesId, pageSize, cursor, extended, checkAddressReservedByte, error);
+//     CursorPaginatedResult<TokenData> = phantasmaAPI.GetAccountNFTs(account, tokenSymbol, carbonTokenId, carbonSeriesId, pageSize, cursor, extended, checkAddressReservedByte, addressType, error);
 //     CursorPaginatedResult<Token> = phantasmaAPI.GetAccountOwnedTokens(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, error);
+//     CursorPaginatedResult<Token> = phantasmaAPI.GetAccountOwnedTokens(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType, error);
 //     CursorPaginatedResult<TokenSeries> = phantasmaAPI.GetAccountOwnedTokenSeries(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, error);
+//     CursorPaginatedResult<TokenSeries> = phantasmaAPI.GetAccountOwnedTokenSeries(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType, error);
 //     Int32 = phantasmaAPI.GetAuctionsCount(chainAddressOrName, symbol, error);
 //     vector<Auction> = phantasmaAPI.GetAuctions(chainAddressOrName, symbol, page, pageSize, error);
 //     Auction = phantasmaAPI.GetAuction(chainAddressOrName, symbol, IDtext, error);
@@ -573,6 +583,22 @@ enum class TokenSeriesMode
 	Unique,
 	Duplicated
 };
+
+// How the node reads the text of an address argument. A Phantasma address arrives in its base58
+// form; a Carbon account key arrives as 64 hex characters. The node takes the same field either
+// way, so nothing but this value tells it which decoder to use.
+enum class AddressType
+{
+	Phantasma,
+	Carbon
+};
+
+// The word the node expects for an address type. It reads the value case-insensitively, and this is
+// the spelling its own enum declares.
+inline const Char* AddressTypeText(AddressType type)
+{
+	return type == AddressType::Carbon ? PHANTASMA_LITERAL("Carbon") : PHANTASMA_LITERAL("Phantasma");
+}
 
 struct Balance {
 	String chain; //
@@ -1089,6 +1115,7 @@ class PhantasmaJsonAPI
 	// travel as a native JSON array parameter and a malformed address rejects the whole batch.
 	static void MakeGetAccountInfosRequest(JSONBuilder&, const String* addresses, int addressCount);
 	static void MakeGetAccountInfosRequest(JSONBuilder&, const String* addresses, int addressCount, bool checkAddressReservedByte, const Char* addressType);
+	static void MakeGetAccountInfosRequest(JSONBuilder&, const String* addresses, int addressCount, bool checkAddressReservedByte, AddressType addressType);
 	static bool ParseGetAccountInfosResponse(const JSONValue&, PHANTASMA_VECTOR<AccountInfo>& out, PhantasmaError* err = 0);
 	// Returns the account name and balance of given address.
 	// Deprecated: the response embeds every owned NFT id (capped at 10000 per token while amount
@@ -1167,6 +1194,7 @@ class PhantasmaJsonAPI
 	static bool ParseGetOrganizationMembersResponse(const JSONValue&, CursorPaginatedResult<OrganizationMember>& out, PhantasmaError* err = 0);
 	// Returns one organization membership by registered name.
 	static void MakeGetOrganizationMemberRequest(JSONBuilder&, const Char* name, const Char* address, bool checkAddressReservedByte, const Char* addressType);
+	static void MakeGetOrganizationMemberRequest(JSONBuilder&, const Char* name, const Char* address, bool checkAddressReservedByte, AddressType addressType);
 	static bool ParseGetOrganizationMemberResponse(const JSONValue&, OrganizationMember& out, PhantasmaError* err = 0);
 	// Returns content of a Phantasma leaderboard.
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default leaderboard object.
@@ -1198,18 +1226,23 @@ class PhantasmaJsonAPI
 	static bool ParseGetNFTsResponse(const JSONValue&, PHANTASMA_VECTOR<TokenData>& out, PhantasmaError* err = 0);
 	// Returns the balance for a specific token and chain, given an address.
 	static void MakeGetTokenBalanceRequest(JSONBuilder&, const Char* account, const Char* tokenSymbol, const Char* chainInput);
+	static void MakeGetTokenBalanceRequest(JSONBuilder&, const Char* account, const Char* tokenSymbol, const Char* chainInput, bool checkAddressReservedByte, AddressType addressType);
 	static bool ParseGetTokenBalanceResponse(const JSONValue&, Balance& out, PhantasmaError* err = 0);
 	// Returns fungible token balances owned by an address (cursor pagination).
 	static void MakeGetAccountFungibleTokensRequest(JSONBuilder&, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte);
+	static void MakeGetAccountFungibleTokensRequest(JSONBuilder&, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType);
 	static bool ParseGetAccountFungibleTokensResponse(const JSONValue&, CursorPaginatedResult<Balance>& out, PhantasmaError* err = 0);
 	// Returns NFTs owned by an address (cursor pagination).
 	static void MakeGetAccountNFTsRequest(JSONBuilder&, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 carbonSeriesId, UInt32 pageSize, const Char* cursor, bool extended, bool checkAddressReservedByte);
+	static void MakeGetAccountNFTsRequest(JSONBuilder&, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 carbonSeriesId, UInt32 pageSize, const Char* cursor, bool extended, bool checkAddressReservedByte, AddressType addressType);
 	static bool ParseGetAccountNFTsResponse(const JSONValue&, CursorPaginatedResult<TokenData>& out, PhantasmaError* err = 0);
 	// Returns NFT tokens for which the account owns at least one NFT instance (cursor pagination).
 	static void MakeGetAccountOwnedTokensRequest(JSONBuilder&, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte);
+	static void MakeGetAccountOwnedTokensRequest(JSONBuilder&, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType);
 	static bool ParseGetAccountOwnedTokensResponse(const JSONValue&, CursorPaginatedResult<Token>& out, PhantasmaError* err = 0);
 	// Returns NFT series for which the account owns at least one NFT instance (cursor pagination).
 	static void MakeGetAccountOwnedTokenSeriesRequest(JSONBuilder&, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte);
+	static void MakeGetAccountOwnedTokenSeriesRequest(JSONBuilder&, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType);
 	static bool ParseGetAccountOwnedTokenSeriesResponse(const JSONValue&, CursorPaginatedResult<TokenSeries>& out, PhantasmaError* err = 0);
 	// Returns the number of active auctions.
 	static void MakeGetAuctionsCountRequest(JSONBuilder&, const Char* chainAddressOrName, const Char* symbol);
@@ -1381,6 +1414,7 @@ class PhantasmaAPI
 	CursorPaginatedResult<OrganizationMember> GetOrganizationMembers(const Char* name, UInt32 pageSize, const Char* cursor, bool includeMemberTime, PhantasmaError* out_error = nullptr);
 	// Returns one organization membership by registered name.
 	OrganizationMember GetOrganizationMember(const Char* name, const Char* address, bool checkAddressReservedByte, const Char* addressType, PhantasmaError* out_error = nullptr);
+	OrganizationMember GetOrganizationMember(const Char* name, const Char* address, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error = nullptr);
 	// Returns content of a Phantasma leaderboard.
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default leaderboard object.
 	Leaderboard GetLeaderboard(const Char* name, PhantasmaError* out_error = nullptr);
@@ -1411,14 +1445,22 @@ class PhantasmaAPI
 	PHANTASMA_VECTOR<TokenData> GetNFTs(const Char* symbol, const Char* IDtext, bool extended, PhantasmaError* out_error = nullptr);
 	// Returns the balance for a specific token and chain, given an address.
 	Balance GetTokenBalance(const Char* account, const Char* tokenSymbol, const Char* chainInput, PhantasmaError* out_error = nullptr);
+	// The same query against an account named by its address TYPE. Pass "Carbon" with a 64-hex
+	// Carbon account key, which is how an NFT instance's own address is asked about; pass
+	// "Phantasma" for an ordinary address, which is what the other overload sends.
+	Balance GetTokenBalance(const Char* account, const Char* tokenSymbol, const Char* chainInput, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error = nullptr);
 	// Returns fungible token balances owned by an address (cursor pagination).
 	CursorPaginatedResult<Balance> GetAccountFungibleTokens(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, PhantasmaError* out_error = nullptr);
+	CursorPaginatedResult<Balance> GetAccountFungibleTokens(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error = nullptr);
 	// Returns NFTs owned by an address (cursor pagination).
 	CursorPaginatedResult<TokenData> GetAccountNFTs(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 carbonSeriesId, UInt32 pageSize, const Char* cursor, bool extended, bool checkAddressReservedByte, PhantasmaError* out_error = nullptr);
+	CursorPaginatedResult<TokenData> GetAccountNFTs(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 carbonSeriesId, UInt32 pageSize, const Char* cursor, bool extended, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error = nullptr);
 	// Returns NFT tokens for which the account owns at least one NFT instance (cursor pagination).
 	CursorPaginatedResult<Token> GetAccountOwnedTokens(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, PhantasmaError* out_error = nullptr);
+	CursorPaginatedResult<Token> GetAccountOwnedTokens(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error = nullptr);
 	// Returns NFT series for which the account owns at least one NFT instance (cursor pagination).
 	CursorPaginatedResult<TokenSeries> GetAccountOwnedTokenSeries(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, PhantasmaError* out_error = nullptr);
+	CursorPaginatedResult<TokenSeries> GetAccountOwnedTokenSeries(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error = nullptr);
 	// Returns the number of active auctions.
 	Int32 GetAuctionsCount(const Char* chainAddressOrName, const Char* symbol, PhantasmaError* out_error = nullptr);
 	// Returns the auctions available in the market. (paginated call)
@@ -2836,6 +2878,13 @@ PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountInfosRequest(JSONBuilder
 	json::EndObject(request);
 }
 
+// The same request with the address type checked at compile time. New code takes this one; the
+// overload above is the form this SDK shipped with.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountInfosRequest(JSONBuilder& request, const String* addresses, int addressCount, bool checkAddressReservedByte, AddressType addressType)
+{
+	MakeGetAccountInfosRequest(request, addresses, addressCount, checkAddressReservedByte, AddressTypeText(addressType));
+}
+
 PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetAccountInfosResponse(const JSONValue& _jsonResponse, PHANTASMA_VECTOR<AccountInfo>& output, PhantasmaError* pout_err)
 {
 	PhantasmaError err_dummy;
@@ -3517,6 +3566,12 @@ PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetOrganizationMemberRequest(JSONB
 	json::EndObject(request);
 }
 
+// The same request with the address type checked at compile time.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetOrganizationMemberRequest(JSONBuilder& request, const Char* name, const Char* address, bool checkAddressReservedByte, AddressType addressType)
+{
+	MakeGetOrganizationMemberRequest(request, name, address, checkAddressReservedByte, AddressTypeText(addressType));
+}
+
 PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetOrganizationMemberResponse(const JSONValue& _jsonResponse, OrganizationMember& output, PhantasmaError* pout_err)
 {
 	PhantasmaError err_dummy;
@@ -3851,6 +3906,18 @@ PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetTokenBalanceRequest(JSONBuilder
 	json::EndObject(request);
 }
 
+// The same request against an account named by its address type. "Carbon" takes a 64-hex Carbon
+// account key, which is how an NFT instance's own address is asked about.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetTokenBalanceRequest(JSONBuilder& request, const Char* account, const Char* tokenSymbol, const Char* chainInput, bool checkAddressReservedByte, AddressType addressType)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getTokenBalance"));
+	AddJsonRpcRequestId(request);
+	json::AddArray(request, PHANTASMA_LITERAL("params"), account, tokenSymbol, chainInput, checkAddressReservedByte, AddressTypeText(addressType));
+	json::EndObject(request);
+}
+
 PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetTokenBalanceResponse(const JSONValue& _jsonResponse, Balance& output, PhantasmaError* pout_err)
 {
 	PhantasmaError err_dummy;
@@ -3873,6 +3940,17 @@ PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountFungibleTokensRequest(JS
 	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getAccountFungibleTokens"));
 	AddJsonRpcRequestId(request);
 	json::AddArray(request, PHANTASMA_LITERAL("params"), account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte);
+	json::EndObject(request);
+}
+
+// The same request against an account named by its address type.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountFungibleTokensRequest(JSONBuilder& request, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getAccountFungibleTokens"));
+	AddJsonRpcRequestId(request);
+	json::AddArray(request, PHANTASMA_LITERAL("params"), account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, AddressTypeText(addressType));
 	json::EndObject(request);
 }
 
@@ -3921,6 +3999,17 @@ PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountNFTsRequest(JSONBuilder&
 	json::EndObject(request);
 }
 
+// The same request against an account named by its address type.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountNFTsRequest(JSONBuilder& request, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 carbonSeriesId, UInt32 pageSize, const Char* cursor, bool extended, bool checkAddressReservedByte, AddressType addressType)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getAccountNFTs"));
+	AddJsonRpcRequestId(request);
+	json::AddArray(request, PHANTASMA_LITERAL("params"), account, tokenSymbol, carbonTokenId, carbonSeriesId, pageSize, cursor, extended, checkAddressReservedByte, AddressTypeText(addressType));
+	json::EndObject(request);
+}
+
 PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetAccountNFTsResponse(const JSONValue& _jsonResponse, CursorPaginatedResult<TokenData>& output, PhantasmaError* pout_err)
 {
 	PhantasmaError err_dummy;
@@ -3966,6 +4055,17 @@ PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountOwnedTokensRequest(JSONB
 	json::EndObject(request);
 }
 
+// The same request against an account named by its address type.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountOwnedTokensRequest(JSONBuilder& request, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getAccountOwnedTokens"));
+	AddJsonRpcRequestId(request);
+	json::AddArray(request, PHANTASMA_LITERAL("params"), account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, AddressTypeText(addressType));
+	json::EndObject(request);
+}
+
 PHANTASMA_FUNCTION bool PhantasmaJsonAPI::ParseGetAccountOwnedTokensResponse(const JSONValue& _jsonResponse, CursorPaginatedResult<Token>& output, PhantasmaError* pout_err)
 {
 	PhantasmaError err_dummy;
@@ -4008,6 +4108,17 @@ PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountOwnedTokenSeriesRequest(
 	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getAccountOwnedTokenSeries"));
 	AddJsonRpcRequestId(request);
 	json::AddArray(request, PHANTASMA_LITERAL("params"), account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte);
+	json::EndObject(request);
+}
+
+// The same request against an account named by its address type.
+PHANTASMA_FUNCTION void PhantasmaJsonAPI::MakeGetAccountOwnedTokenSeriesRequest(JSONBuilder& request, const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType)
+{
+	json::BeginObject(request);
+	json::AddString(request, PHANTASMA_LITERAL("jsonrpc"), PHANTASMA_LITERAL("2.0"));
+	json::AddString(request, PHANTASMA_LITERAL("method"), PHANTASMA_LITERAL("getAccountOwnedTokenSeries"));
+	AddJsonRpcRequestId(request);
+	json::AddArray(request, PHANTASMA_LITERAL("params"), account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, AddressTypeText(addressType));
 	json::EndObject(request);
 }
 
@@ -4684,6 +4795,12 @@ PHANTASMA_FUNCTION OrganizationMember PhantasmaAPI::GetOrganizationMember(const 
 	return output;
 }
 
+// The same call with the address type checked at compile time.
+PHANTASMA_FUNCTION OrganizationMember PhantasmaAPI::GetOrganizationMember(const Char* name, const Char* address, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error)
+{
+	return GetOrganizationMember(name, address, checkAddressReservedByte, AddressTypeText(addressType), out_error);
+}
+
 PHANTASMA_FUNCTION Leaderboard PhantasmaAPI::GetLeaderboard(const Char* name, PhantasmaError* out_error)
 {
 	JSONBuilder request;
@@ -4828,10 +4945,34 @@ PHANTASMA_FUNCTION Balance PhantasmaAPI::GetTokenBalance(const Char* account, co
 	return output;
 }
 
+PHANTASMA_FUNCTION Balance PhantasmaAPI::GetTokenBalance(const Char* account, const Char* tokenSymbol, const Char* chainInput, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error)
+{
+	JSONBuilder request;
+	PhantasmaJsonAPI::MakeGetTokenBalanceRequest(request, account, tokenSymbol, chainInput, checkAddressReservedByte, addressType);
+	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
+	PhantasmaJsonAPI::UseRequestId(request);
+	Balance output;
+	if( !out_error || out_error->code == 0 )
+		PhantasmaJsonAPI::ParseGetTokenBalanceResponse(json::Parse(response), output, out_error);
+	return output;
+}
+
 PHANTASMA_FUNCTION CursorPaginatedResult<Balance> PhantasmaAPI::GetAccountFungibleTokens(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, PhantasmaError* out_error)
 {
 	JSONBuilder request;
 	PhantasmaJsonAPI::MakeGetAccountFungibleTokensRequest(request, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte);
+	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
+	PhantasmaJsonAPI::UseRequestId(request);
+	CursorPaginatedResult<Balance> output;
+	if( !out_error || out_error->code == 0 )
+		PhantasmaJsonAPI::ParseGetAccountFungibleTokensResponse(json::Parse(response), output, out_error);
+	return output;
+}
+
+PHANTASMA_FUNCTION CursorPaginatedResult<Balance> PhantasmaAPI::GetAccountFungibleTokens(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error)
+{
+	JSONBuilder request;
+	PhantasmaJsonAPI::MakeGetAccountFungibleTokensRequest(request, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType);
 	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
 	PhantasmaJsonAPI::UseRequestId(request);
 	CursorPaginatedResult<Balance> output;
@@ -4852,6 +4993,18 @@ PHANTASMA_FUNCTION CursorPaginatedResult<TokenData> PhantasmaAPI::GetAccountNFTs
 	return output;
 }
 
+PHANTASMA_FUNCTION CursorPaginatedResult<TokenData> PhantasmaAPI::GetAccountNFTs(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 carbonSeriesId, UInt32 pageSize, const Char* cursor, bool extended, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error)
+{
+	JSONBuilder request;
+	PhantasmaJsonAPI::MakeGetAccountNFTsRequest(request, account, tokenSymbol, carbonTokenId, carbonSeriesId, pageSize, cursor, extended, checkAddressReservedByte, addressType);
+	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
+	PhantasmaJsonAPI::UseRequestId(request);
+	CursorPaginatedResult<TokenData> output;
+	if( !out_error || out_error->code == 0 )
+		PhantasmaJsonAPI::ParseGetAccountNFTsResponse(json::Parse(response), output, out_error);
+	return output;
+}
+
 PHANTASMA_FUNCTION CursorPaginatedResult<Token> PhantasmaAPI::GetAccountOwnedTokens(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, PhantasmaError* out_error)
 {
 	JSONBuilder request;
@@ -4864,10 +5017,34 @@ PHANTASMA_FUNCTION CursorPaginatedResult<Token> PhantasmaAPI::GetAccountOwnedTok
 	return output;
 }
 
+PHANTASMA_FUNCTION CursorPaginatedResult<Token> PhantasmaAPI::GetAccountOwnedTokens(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error)
+{
+	JSONBuilder request;
+	PhantasmaJsonAPI::MakeGetAccountOwnedTokensRequest(request, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType);
+	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
+	PhantasmaJsonAPI::UseRequestId(request);
+	CursorPaginatedResult<Token> output;
+	if( !out_error || out_error->code == 0 )
+		PhantasmaJsonAPI::ParseGetAccountOwnedTokensResponse(json::Parse(response), output, out_error);
+	return output;
+}
+
 PHANTASMA_FUNCTION CursorPaginatedResult<TokenSeries> PhantasmaAPI::GetAccountOwnedTokenSeries(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, PhantasmaError* out_error)
 {
 	JSONBuilder request;
 	PhantasmaJsonAPI::MakeGetAccountOwnedTokenSeriesRequest(request, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte);
+	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
+	PhantasmaJsonAPI::UseRequestId(request);
+	CursorPaginatedResult<TokenSeries> output;
+	if( !out_error || out_error->code == 0 )
+		PhantasmaJsonAPI::ParseGetAccountOwnedTokenSeriesResponse(json::Parse(response), output, out_error);
+	return output;
+}
+
+PHANTASMA_FUNCTION CursorPaginatedResult<TokenSeries> PhantasmaAPI::GetAccountOwnedTokenSeries(const Char* account, const Char* tokenSymbol, UInt64 carbonTokenId, UInt32 pageSize, const Char* cursor, bool checkAddressReservedByte, AddressType addressType, PhantasmaError* out_error)
+{
+	JSONBuilder request;
+	PhantasmaJsonAPI::MakeGetAccountOwnedTokenSeriesRequest(request, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType);
 	const JSONDocument& response = HttpPost(m_httpClient, PhantasmaJsonAPI::Uri(), request, out_error);
 	PhantasmaJsonAPI::UseRequestId(request);
 	CursorPaginatedResult<TokenSeries> output;

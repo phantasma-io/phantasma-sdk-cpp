@@ -4,16 +4,6 @@
 namespace testcases {
 using namespace testutil;
 
-namespace {
-void ReportJsonRpcRequest(TestContext& ctx, const JSONBuilder& request, const char* method, const char* params, const char* label)
-{
-	const std::string requestId = rpc::PhantasmaJsonAPI::RequestId(request);
-	const std::string expected = std::string("{\"jsonrpc\": \"2.0\", \"method\": \"") + method +
-	                             "\", \"id\": \"" + requestId + "\", \"params\": " + params + "}";
-	Report(ctx, request.s.str() == expected, label);
-}
-} // namespace
-
 void RunApiJsonNumericFlexTests(TestContext& ctx)
 {
 	rpc::PhantasmaJsonAPI::UseRequestId("1");

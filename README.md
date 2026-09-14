@@ -70,14 +70,19 @@
      void PhantasmaJsonAPI::MakeGetNFTsRequest(JSONBuilder, symbol, IDtext, extended);
      bool PhantasmaJsonAPI::ParseGetNFTsResponse(JSONValue, vector<TokenData>);
      void PhantasmaJsonAPI::MakeGetTokenBalanceRequest(JSONBuilder, addressText, tokenSymbol, chainInput);
+     void PhantasmaJsonAPI::MakeGetTokenBalanceRequest(JSONBuilder, addressText, tokenSymbol, chainInput, checkAddressReservedByte, addressType);
      bool PhantasmaJsonAPI::ParseGetTokenBalanceResponse(JSONValue, Balance);
      void PhantasmaJsonAPI::MakeGetAccountFungibleTokensRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte);
+     void PhantasmaJsonAPI::MakeGetAccountFungibleTokensRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType);
      bool PhantasmaJsonAPI::ParseGetAccountFungibleTokensResponse(JSONValue, CursorPaginatedResult<Balance>);
      void PhantasmaJsonAPI::MakeGetAccountNFTsRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, carbonSeriesId, pageSize, cursor, extended, checkAddressReservedByte);
+     void PhantasmaJsonAPI::MakeGetAccountNFTsRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, carbonSeriesId, pageSize, cursor, extended, checkAddressReservedByte, addressType);
      bool PhantasmaJsonAPI::ParseGetAccountNFTsResponse(JSONValue, CursorPaginatedResult<TokenData>);
      void PhantasmaJsonAPI::MakeGetAccountOwnedTokensRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte);
+     void PhantasmaJsonAPI::MakeGetAccountOwnedTokensRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType);
      bool PhantasmaJsonAPI::ParseGetAccountOwnedTokensResponse(JSONValue, CursorPaginatedResult<Token>);
      void PhantasmaJsonAPI::MakeGetAccountOwnedTokenSeriesRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte);
+     void PhantasmaJsonAPI::MakeGetAccountOwnedTokenSeriesRequest(JSONBuilder, account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType);
      bool PhantasmaJsonAPI::ParseGetAccountOwnedTokenSeriesResponse(JSONValue, CursorPaginatedResult<TokenSeries>);
      void PhantasmaJsonAPI::MakeGetAuctionsCountRequest(JSONBuilder, chainAddressOrName, symbol);
      bool PhantasmaJsonAPI::ParseGetAuctionsCountResponse(JSONValue, Int32);
@@ -181,10 +186,15 @@
      TokenData = phantasmaAPI.GetNFT(symbol, IDtext, extended, error);
      vector<TokenData> = phantasmaAPI.GetNFTs(symbol, IDtext, extended, error);
      Balance = phantasmaAPI.GetTokenBalance(addressText, tokenSymbol, chainInput, error);
+     Balance = phantasmaAPI.GetTokenBalance(addressText, tokenSymbol, chainInput, checkAddressReservedByte, addressType, error);
      CursorPaginatedResult<Balance> = phantasmaAPI.GetAccountFungibleTokens(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, error);
+     CursorPaginatedResult<Balance> = phantasmaAPI.GetAccountFungibleTokens(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType, error);
      CursorPaginatedResult<TokenData> = phantasmaAPI.GetAccountNFTs(account, tokenSymbol, carbonTokenId, carbonSeriesId, pageSize, cursor, extended, checkAddressReservedByte, error);
+     CursorPaginatedResult<TokenData> = phantasmaAPI.GetAccountNFTs(account, tokenSymbol, carbonTokenId, carbonSeriesId, pageSize, cursor, extended, checkAddressReservedByte, addressType, error);
      CursorPaginatedResult<Token> = phantasmaAPI.GetAccountOwnedTokens(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, error);
+     CursorPaginatedResult<Token> = phantasmaAPI.GetAccountOwnedTokens(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType, error);
      CursorPaginatedResult<TokenSeries> = phantasmaAPI.GetAccountOwnedTokenSeries(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, error);
+     CursorPaginatedResult<TokenSeries> = phantasmaAPI.GetAccountOwnedTokenSeries(account, tokenSymbol, carbonTokenId, pageSize, cursor, checkAddressReservedByte, addressType, error);
      Int32 = phantasmaAPI.GetAuctionsCount(chainAddressOrName, symbol, error);
      vector<Auction> = phantasmaAPI.GetAuctions(chainAddressOrName, symbol, page, pageSize, error);
      Auction = phantasmaAPI.GetAuction(chainAddressOrName, symbol, IDtext, error);
@@ -287,10 +297,27 @@
    balance row for a returned token the burner does not hold. That set is chain
    state with no costlier bound, so `PlanFees` demands it. Fill
    `FeePlanOptions::infusions` and set `infusionsRead`; an empty list states that
-   the instances hold nothing. `BurnedInstances` tells you which instances a message
-   burns, and each one holds its assets at `TokenHelper::GetNftAddress(tokenId,
-   instanceId)`. This SDK does not assemble the list for you: its account queries
-   take no address type, so they cannot be asked about a Carbon NFT address.
+   the instances hold nothing. `ReadInfusedAssets` in `Carbon/FeeInfusions.h` fills
+   that list from the chain for a whole message, or for one instance:
+
+        #include "Carbon/FeeInfusions.h"
+
+        PHANTASMA_VECTOR<InfusedAsset> infusions;
+        if( !ReadInfusedAssets(api, env.msg, infusions) )
+            return; // a query failed; the plan would be a guess
+        options.infusions = infusions.empty() ? nullptr : &infusions.front();
+        options.numInfusions = (uint32_t)infusions.size();
+        options.infusionsRead = true;
+
+   It asks the account queries about the NFT's own address, which is
+   `TokenHelper::GetNftAddress(tokenId, instanceId)`, with `AddressType::Carbon`.
+   `BurnedInstances` names the instances a message burns if you would rather read
+   them one at a time.
+
+   `AddressType` is what every account query takes to say how the node should read
+   the address text: `Phantasma` for the base58 form, `Carbon` for a 64-hex account
+   key. The node reads it as a word, and the SDK names the two it accepts, so a
+   misspelling is a compile error and not a request the node refuses.
  - A contract call (`Call`, `Call_Multi`, `Trade`, `Phantasma`) chooses its own
    witnesses, and each one is 96 bytes the chain bills. So `PlanFees` asks for
    `witnessCount`. An assumed single witness would under-offer every multi-party
@@ -302,6 +329,31 @@
    up before sending.
  - `FormatTokenAmount` renders an atom count as a decimal string. KCAL has 10
    decimals and SOUL has 8. `SummarizeFeePlan` renders a whole plan for display.
+
+------------------------------------------------------------------------------
+ Reading a Carbon transaction back
+------------------------------------------------------------------------------
+ `ParseTx` and `ParseSignedTx` read a message the way the chain reads it. Use them
+  to show an incoming transaction, to check what a signer is about to sign, or to
+  plan a fee for a message somebody else built.
+
+     #include "Carbon/DataBlockchain.h"
+     using namespace phantasma::carbon;
+
+     const ByteView envelope{ bytes.data(), bytes.size() };
+
+     Allocator storage;
+     Blockchain::SignedTxMsg parsed;
+     ByteView signedPortion;
+     if( !Blockchain::ParseSignedTx(parsed, signedPortion, envelope, storage) )
+         return; // truncated, or a transaction type this SDK does not know
+
+     // parsed.msg is the message, parsed.witnesses are its signers, and
+     // signedPortion is the part of the envelope each signature is made over.
+
+ Two lifetimes matter. The message keeps views into `storage`, so the allocator has
+  to outlive it. `signedPortion` points into the bytes you passed in, so those have
+  to outlive it too.
 
 ------------------------------------------------------------------------------
  API configuration

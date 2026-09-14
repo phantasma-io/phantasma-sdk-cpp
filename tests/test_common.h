@@ -22,6 +22,7 @@
 #include "../include/Carbon/Contracts/Token.h"
 #include "../include/Carbon/Contracts/TokenSchemas.h"
 #include "../include/Carbon/DataVm.h"
+#include "../include/Carbon/FeeInfusions.h"
 #include "../include/Utils/Timestamp.h"
 #include "../include/VM/ScriptBuilder.h"
 #include "../include/Blockchain/Transaction.h"
@@ -40,6 +41,17 @@ struct TestContext {
 };
 
 void Report(TestContext& ctx, bool ok, const std::string& name, const std::string& details = {});
+
+// Reports whether a built JSON-RPC request is exactly the envelope the node expects, with `params`
+// written as the JSON array text it must carry. The request id is generated, so it is read back
+// from the request rather than spelled out here.
+inline void ReportJsonRpcRequest(TestContext& ctx, const JSONBuilder& request, const char* method, const char* params, const char* label)
+{
+	const std::string requestId = rpc::PhantasmaJsonAPI::RequestId(request);
+	const std::string expected = std::string("{\"jsonrpc\": \"2.0\", \"method\": \"") + method +
+	                             "\", \"id\": \"" + requestId + "\", \"params\": " + params + "}";
+	Report(ctx, request.s.str() == expected, label);
+}
 
 template<typename Fn>
 inline void ExpectNoThrow(TestContext& ctx, const std::string& name, Fn&& fn)
