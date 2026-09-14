@@ -2,6 +2,9 @@
 
 CXX ?= g++
 CXXFLAGS ?= -std=c++17 -I../include
+# Track the headers each object was built from. Without this an edit to include/ leaves the old
+# objects in place and the run reports the previous binary's result.
+DEPFLAGS := -MMD -MP
 LDFLAGS ?= -lcrypto
 LDFLAGS += -lsodium
 
@@ -23,13 +26,13 @@ $(TARGET_PATH): $(OBJS) | $(BUILD_STAMP)
 	$(CXX) $(CXXFLAGS) $(OBJS) -o $(TARGET_PATH) $(LDFLAGS)
 
 $(BUILD_DIR)/%.o: %.cpp | $(BUILD_STAMP)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(VM_BIGINT_PARITY_TARGET): $(VM_BIGINT_PARITY_OBJS) | $(BUILD_STAMP)
 	$(CXX) $(CXXFLAGS) $(VM_BIGINT_PARITY_OBJS) -o $(VM_BIGINT_PARITY_TARGET) $(LDFLAGS)
 
 $(BUILD_DIR)/vm_bigint_parity_%.o: %.cpp | $(BUILD_STAMP)
-	$(CXX) $(CXXFLAGS) -DPHANTASMA_EXCEPTION_ENABLE -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) -DPHANTASMA_EXCEPTION_ENABLE -c $< -o $@
 
 $(BUILD_STAMP):
 	mkdir -p $(BUILD_DIR)
@@ -44,3 +47,5 @@ run-vm-bigint-parity: $(VM_BIGINT_PARITY_TARGET)
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+-include $(OBJS:.o=.d) $(VM_BIGINT_PARITY_OBJS:.o=.d)
