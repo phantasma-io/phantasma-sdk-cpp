@@ -10,8 +10,9 @@ void RunMetadataHelperTests(TestContext& ctx)
 		const VmNamedVariableSchema schema = MakeSchema("royalties", VmType::Int32);
 		std::vector<VmNamedDynamicVariable> fields;
 		std::vector<MetadataField> metadata = { { "royalties", MetadataValue::FromInt64(42) } };
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
-		const bool ok = fields.size() == 1 &&
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
+		const bool ok = pushed && fields.size() == 1 &&
 		                fields[0].value.type == VmType::Int32 &&
 		                (int32_t)fields[0].value.data.int32 == 42;
 		Report(ctx, ok, "MetadataHelper Int32 accepts");
@@ -21,25 +22,28 @@ void RunMetadataHelperTests(TestContext& ctx)
 		const VmNamedVariableSchema schema = MakeSchema("royalties", VmType::Int32);
 		std::vector<VmNamedDynamicVariable> fields;
 		std::vector<MetadataField> metadata = { { "royalties", MetadataValue::FromString("forty-two") } };
-		ExpectThrowContains(ctx, "MetadataHelper Int32 non-number", "must be a number", [&]()
-		    { MetadataHelper::PushMetadataField(schema, fields, metadata, alloc); });
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
+		ExpectRefused(ctx, "MetadataHelper Int32 non-number", "must be a number", pushed, error);
 	}
 	{
 		Allocator alloc;
 		const VmNamedVariableSchema schema = MakeSchema("royalties", VmType::Int32);
 		std::vector<VmNamedDynamicVariable> fields;
 		std::vector<MetadataField> metadata = { { "royalties", MetadataValue::FromUInt64(0x100000000ULL) } };
-		ExpectThrowContains(ctx, "MetadataHelper Int32 range", "between -2147483648", [&]()
-		    { MetadataHelper::PushMetadataField(schema, fields, metadata, alloc); });
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
+		ExpectRefused(ctx, "MetadataHelper Int32 range", "between -2147483648", pushed, error);
 	}
 	{
 		Allocator alloc;
 		const VmNamedVariableSchema schema = MakeSchema("payload", VmType::Bytes);
 		std::vector<VmNamedDynamicVariable> fields;
 		std::vector<MetadataField> metadata = { { "payload", MetadataValue::FromString("0a0b") } };
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
 		const ByteArray got = BytesFromView(fields[0].value.data.bytes);
-		const bool ok = fields[0].value.type == VmType::Bytes && got == ByteArray({ (Byte)0x0A, (Byte)0x0B });
+		const bool ok = pushed && fields[0].value.type == VmType::Bytes && got == ByteArray({ (Byte)0x0A, (Byte)0x0B });
 		Report(ctx, ok, "MetadataHelper Bytes hex");
 	}
 	{
@@ -47,27 +51,30 @@ void RunMetadataHelperTests(TestContext& ctx)
 		const VmNamedVariableSchema schema = MakeSchema("payload", VmType::Bytes);
 		std::vector<VmNamedDynamicVariable> fields;
 		std::vector<MetadataField> metadata = { { "payload", MetadataValue::FromString("0x0a0b") } };
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
 		const ByteArray got = BytesFromView(fields[0].value.data.bytes);
-		const bool ok = fields[0].value.type == VmType::Bytes && got == ByteArray({ (Byte)0x0A, (Byte)0x0B });
+		const bool ok = pushed && fields[0].value.type == VmType::Bytes && got == ByteArray({ (Byte)0x0A, (Byte)0x0B });
 		Report(ctx, ok, "MetadataHelper Bytes hex 0x");
 	}
 	{
 		Allocator alloc;
 		const VmNamedVariableSchema schema = MakeSchema("level", VmType::Int8);
 		std::vector<VmNamedDynamicVariable> fields;
-		std::vector<MetadataField> metadata = { { "level", MetadataValue::FromInt64(200) } };
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
-		const bool ok = fields[0].value.type == VmType::Int8 && fields[0].value.data.int8 == 200;
+		std::vector<MetadataField> metadata = { { "level", MetadataValue::FromUInt64(200) } };
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
+		const bool ok = pushed && fields[0].value.type == VmType::Int8 && fields[0].value.data.int8 == 200;
 		Report(ctx, ok, "MetadataHelper Int8 unsigned");
 	}
 	{
 		Allocator alloc;
 		const VmNamedVariableSchema schema = MakeSchema("checksum", VmType::Int16);
 		std::vector<VmNamedDynamicVariable> fields;
-		std::vector<MetadataField> metadata = { { "checksum", MetadataValue::FromInt64(65535) } };
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
-		const bool ok = fields[0].value.type == VmType::Int16 && fields[0].value.data.int16 == 65535;
+		std::vector<MetadataField> metadata = { { "checksum", MetadataValue::FromUInt64(65535) } };
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
+		const bool ok = pushed && fields[0].value.type == VmType::Int16 && fields[0].value.data.int16 == 65535;
 		Report(ctx, ok, "MetadataHelper Int16 unsigned");
 	}
 	{
@@ -75,16 +82,18 @@ void RunMetadataHelperTests(TestContext& ctx)
 		const VmNamedVariableSchema schema = MakeSchema("payload", VmType::Bytes);
 		std::vector<VmNamedDynamicVariable> fields;
 		std::vector<MetadataField> metadata = { { "payload", MetadataValue::FromString("xyz") } };
-		ExpectThrowContains(ctx, "MetadataHelper Bytes invalid hex", "byte array or hex string", [&]()
-		    { MetadataHelper::PushMetadataField(schema, fields, metadata, alloc); });
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
+		ExpectRefused(ctx, "MetadataHelper Bytes invalid hex", "byte array or hex string", pushed, error);
 	}
 	{
 		Allocator alloc;
 		const VmNamedVariableSchema schema = MakeSchema("supply", VmType::Int64);
 		std::vector<VmNamedDynamicVariable> fields;
 		std::vector<MetadataField> metadata = { { "supply", MetadataValue::FromUInt64(std::numeric_limits<uint64_t>::max()) } };
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
-		const bool ok = fields[0].value.type == VmType::Int64 &&
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
+		const bool ok = pushed && fields[0].value.type == VmType::Int64 &&
 		                fields[0].value.data.int64 == std::numeric_limits<uint64_t>::max();
 		Report(ctx, ok, "MetadataHelper Int64 unsigned");
 	}
@@ -103,11 +112,12 @@ void RunMetadataHelperTests(TestContext& ctx)
 			                 { "innerValue", MetadataValue::FromInt64(5) },
 			             }) }
 		};
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
 		const VmDynamicStruct& nested = fields[0].value.data.structure;
 		const VmDynamicVariable* innerName = nested[SmallString("innerName")];
 		const VmDynamicVariable* innerValue = nested[SmallString("innerValue")];
-		const bool ok = innerName && innerValue &&
+		const bool ok = pushed && innerName && innerValue &&
 		                innerName->type == VmType::String &&
 		                std::string(innerName->data.string) == "demo" &&
 		                innerValue->type == VmType::Int32 &&
@@ -128,8 +138,9 @@ void RunMetadataHelperTests(TestContext& ctx)
 			                 { "extra", MetadataValue::FromString("oops") },
 			             }) }
 		};
-		ExpectThrowContains(ctx, "MetadataHelper Struct unknown", "received unknown property", [&]()
-		    { MetadataHelper::PushMetadataField(schema, fields, metadata, alloc); });
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
+		ExpectRefused(ctx, "MetadataHelper Struct unknown", "received unknown property", pushed, error);
 	}
 	{
 		Allocator alloc;
@@ -142,8 +153,9 @@ void RunMetadataHelperTests(TestContext& ctx)
 		std::vector<MetadataField> metadata = {
 			{ "details", MetadataValue::FromStruct({}) }
 		};
-		ExpectThrowContains(ctx, "MetadataHelper Struct missing", "is mandatory", [&]()
-		    { MetadataHelper::PushMetadataField(schema, fields, metadata, alloc); });
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
+		ExpectRefused(ctx, "MetadataHelper Struct missing", "is mandatory", pushed, error);
 	}
 	{
 		Allocator alloc;
@@ -155,9 +167,10 @@ void RunMetadataHelperTests(TestContext& ctx)
 			              MetadataValue::FromString("beta"),
 			          }) }
 		};
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
 		const VmDynamicVariable& value = fields[0].value;
-		const bool ok = value.type == VmType::Array_String &&
+		const bool ok = pushed && value.type == VmType::Array_String &&
 		                value.arrayLength == 2 &&
 		                std::string(value.data.stringArray[0]) == "alpha" &&
 		                std::string(value.data.stringArray[1]) == "beta";
@@ -174,9 +187,10 @@ void RunMetadataHelperTests(TestContext& ctx)
 			                MetadataValue::FromInt64(5),
 			            }) }
 		};
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
 		const VmDynamicVariable& value = fields[0].value;
-		const bool ok = value.type == VmType::Array_Int8 &&
+		const bool ok = pushed && value.type == VmType::Array_Int8 &&
 		                value.arrayLength == 3 &&
 		                value.data.int8Array &&
 		                value.data.int8Array[0] == 1 &&
@@ -198,12 +212,13 @@ void RunMetadataHelperTests(TestContext& ctx)
 			               MetadataValue::FromStruct({ { "name", MetadataValue::FromString("two") } }),
 			           }) }
 		};
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
 		const VmDynamicVariable& value = fields[0].value;
 		const VmStructArray& arrayValue = value.data.structureArray;
 		const VmDynamicVariable* firstName = arrayValue.structs[0][SmallString("name")];
 		const VmDynamicVariable* secondName = arrayValue.structs[1][SmallString("name")];
-		const bool ok = value.type == VmType::Array_Struct &&
+		const bool ok = pushed && value.type == VmType::Array_Struct &&
 		                value.arrayLength == 2 &&
 		                arrayValue.schema.numFields == 1 &&
 		                std::string(arrayValue.schema.fields[0].name.c_str()) == "name" &&
@@ -219,9 +234,10 @@ void RunMetadataHelperTests(TestContext& ctx)
 		std::vector<MetadataField> metadata = {
 			{ "hash", MetadataValue::FromString("00112233445566778899aabbccddeeff") }
 		};
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
 		const Bytes16 expected(HexToBytes("00112233445566778899aabbccddeeff"));
-		const bool ok = fields[0].value.type == VmType::Bytes16 && fields[0].value.data.bytes16 == expected;
+		const bool ok = pushed && fields[0].value.type == VmType::Bytes16 && fields[0].value.data.bytes16 == expected;
 		Report(ctx, ok, "MetadataHelper Bytes16");
 	}
 	{
@@ -234,11 +250,12 @@ void RunMetadataHelperTests(TestContext& ctx)
 			               MetadataValue::FromString("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
 			           }) }
 		};
-		MetadataHelper::PushMetadataField(schema, fields, metadata, alloc);
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
 		const Bytes32 expectedA(HexToBytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"));
 		const Bytes32 expectedB(HexToBytes("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
 		const VmDynamicVariable& value = fields[0].value;
-		const bool ok = value.type == VmType::Array_Bytes32 &&
+		const bool ok = pushed && value.type == VmType::Array_Bytes32 &&
 		                value.arrayLength == 2 &&
 		                value.data.bytes32Array &&
 		                value.data.bytes32Array[0] == expectedA &&
@@ -267,24 +284,77 @@ void RunTokenMetadataIconTests(TestContext& ctx)
 		};
 	};
 
-	ExpectNoThrow(ctx, "TokenMetadata icon PNG", [&]()
-	    { TokenMetadataBuilder::BuildAndSerialize(buildFields(png)); });
-	ExpectNoThrow(ctx, "TokenMetadata icon JPEG", [&]()
-	    {
+	{
+		ByteArray out;
+		std::string error;
+		Report(ctx, TokenMetadataBuilder::BuildAndSerialize(buildFields(png), out, error), "TokenMetadata icon PNG", error);
+	}
+	{
 		const std::string jpegPayload = "/9j/";
-		TokenMetadataBuilder::BuildAndSerialize(buildFields("data:image/jpeg;base64," + jpegPayload)); });
-	ExpectNoThrow(ctx, "TokenMetadata icon WebP", [&]()
-	    { TokenMetadataBuilder::BuildAndSerialize(buildFields(webp)); });
-	ExpectThrowContains(ctx, "TokenMetadata icon SVG", "base64-encoded data URI", [&]()
-	    { TokenMetadataBuilder::BuildAndSerialize(buildFields(svg)); });
-	ExpectThrowContains(ctx, "TokenMetadata icon legacy svg", "base64-encoded data URI", [&]()
-	    { TokenMetadataBuilder::BuildAndSerialize(buildFields(legacySvg)); });
-	ExpectThrowContains(ctx, "TokenMetadata icon GIF", "base64-encoded data URI", [&]()
-	    { TokenMetadataBuilder::BuildAndSerialize(buildFields(gif)); });
-	ExpectThrowContains(ctx, "TokenMetadata icon empty", "non-empty base64 payload", [&]()
-	    { TokenMetadataBuilder::BuildAndSerialize(buildFields(emptyPayload)); });
-	ExpectThrowContains(ctx, "TokenMetadata icon invalid base64", "payload is not valid base64", [&]()
-	    { TokenMetadataBuilder::BuildAndSerialize(buildFields(invalidPayload)); });
+		ByteArray out;
+		std::string error;
+		Report(ctx, TokenMetadataBuilder::BuildAndSerialize(buildFields("data:image/jpeg;base64," + jpegPayload), out, error), "TokenMetadata icon JPEG", error);
+	}
+	{
+		ByteArray out;
+		std::string error;
+		Report(ctx, TokenMetadataBuilder::BuildAndSerialize(buildFields(webp), out, error), "TokenMetadata icon WebP", error);
+	}
+	{
+		ByteArray out;
+		std::string error;
+		const bool built = TokenMetadataBuilder::BuildAndSerialize(buildFields(svg), out, error);
+		ExpectRefused(ctx, "TokenMetadata icon SVG", "base64-encoded data URI", built, error);
+	}
+	{
+		ByteArray out;
+		std::string error;
+		const bool built = TokenMetadataBuilder::BuildAndSerialize(buildFields(legacySvg), out, error);
+		ExpectRefused(ctx, "TokenMetadata icon legacy svg", "base64-encoded data URI", built, error);
+	}
+	{
+		ByteArray out;
+		std::string error;
+		const bool built = TokenMetadataBuilder::BuildAndSerialize(buildFields(gif), out, error);
+		ExpectRefused(ctx, "TokenMetadata icon GIF", "base64-encoded data URI", built, error);
+	}
+	{
+		ByteArray out;
+		std::string error;
+		const bool built = TokenMetadataBuilder::BuildAndSerialize(buildFields(emptyPayload), out, error);
+		ExpectRefused(ctx, "TokenMetadata icon empty", "non-empty base64 payload", built, error);
+	}
+	{
+		ByteArray out;
+		std::string error;
+		const bool built = TokenMetadataBuilder::BuildAndSerialize(buildFields(invalidPayload), out, error);
+		ExpectRefused(ctx, "TokenMetadata icon invalid base64", "payload is not valid base64", built, error);
+	}
+	// The two shapes that used to run past their own guard in a build without exceptions. The first
+	// dereferenced a null field pointer; the second reached lookup.at("icon") and threw
+	// std::out_of_range out of a build that had asked for no exceptions at all.
+	{
+		Allocator alloc;
+		const VmNamedVariableSchema schema = MakeSchema("royalties", VmType::Int32);
+		std::vector<VmNamedDynamicVariable> fields;
+		std::vector<MetadataField> metadata = { { "somethingElse", MetadataValue::FromInt64(1) } };
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(schema, fields, metadata, alloc, error);
+		ExpectRefused(ctx, "MetadataHelper missing field", "is mandatory", pushed, error);
+	}
+	{
+		// Four fields, so the count check passes, but none of them is the icon.
+		std::vector<std::pair<std::string, std::string>> fields = {
+			{ "name", "My test token!" },
+			{ "description", "My test token description" },
+			{ "url", "http://example.com" },
+			{ "somethingElse", "x" },
+		};
+		ByteArray out;
+		std::string error;
+		const bool built = TokenMetadataBuilder::BuildAndSerialize(fields, out, error);
+		ExpectRefused(ctx, "TokenMetadata icon absent", "missing required fields", built, error);
+	}
 }
 
 } // namespace testcases

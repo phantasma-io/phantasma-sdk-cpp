@@ -354,10 +354,21 @@ static std::vector<MetadataField> ParseMetadataFields(const std::string& text, c
 	throw std::runtime_error(label + " must be a JSON object or array");
 }
 
+static void Ensure(bool condition, const std::string& message)
+{
+	if (!condition)
+	{
+		throw std::runtime_error(message);
+	}
+}
+
 static TokenSchemasOwned ParseTokenSchemas(const std::string& text)
 {
 #ifdef PHANTASMA_RAPIDJSON
-	return TokenSchemasBuilder::FromJson(text);
+	TokenSchemasOwned owned;
+	std::string error;
+	Ensure(TokenSchemasBuilder::FromJson(text, owned, error), "token_schemas is invalid: " + error);
+	return owned;
 #else
 	(void)text;
 	throw std::runtime_error("token_schemas parsing requires PHANTASMA_RAPIDJSON");
@@ -491,13 +502,6 @@ static bool WaitForTx(PhantasmaAPI& api, const std::string& hash, std::string& o
 	return false;
 }
 
-static void Ensure(bool condition, const std::string& message)
-{
-	if (!condition)
-	{
-		throw std::runtime_error(message);
-	}
-}
 
 // Plans a built message against the chain's own prices, prints the plan, and returns the planned
 // copy. Builders carry no prices, so this step is what makes a message sendable: under gas model v2
@@ -573,21 +577,19 @@ static void RunCreateToken(const Config& cfg)
 	const uint8_t decimals = isFungible ? (uint8_t)cfg.fungibleDecimals.value() : 0;
 
 	std::vector<std::pair<std::string, std::string>> tokenMetadata = ParseTokenMetadata(cfg.tokenMetadataRaw);
-	const ByteArray tokenMetadataBytes = TokenMetadataBuilder::BuildAndSerialize(tokenMetadata);
+	std::string builderError;
+	ByteArray tokenMetadataBytes;
+	Ensure(TokenMetadataBuilder::BuildAndSerialize(tokenMetadata, tokenMetadataBytes, builderError),
+		"token_metadata is invalid: " + builderError);
 	ByteArray schemasBytes;
 	if (!isFungible)
 	{
 		schemasBytes = TokenSchemasBuilder::BuildAndSerialize(&schemasOwned.view);
 	}
 
-	TokenInfoOwned tokenInfoOwned = TokenInfoBuilder::Build(
-		cfg.symbol,
-		maxSupply,
-		!isFungible,
-		decimals,
-		owner,
-		tokenMetadataBytes,
-		isFungible ? nullptr : &schemasBytes);
+	TokenInfoOwned tokenInfoOwned;
+	Ensure(TokenInfoBuilder::Build(cfg.symbol, maxSupply, !isFungible, decimals, owner, tokenMetadataBytes, schemasBytes, tokenInfoOwned, builderError),
+		"the token cannot be built: " + builderError);
 
 	TxEnvelope tx = CreateTokenTxHelper::BuildTx(tokenInfoOwned.View(), owner);
 
@@ -634,7 +636,10 @@ static void RunCreateSeries(const Config& cfg)
 
 	std::cout << "Creating new series '" << IdToStringUnsigned(seriesId) << "'" << std::endl;
 
-	const SeriesInfoOwned seriesInfoOwned = SeriesInfoBuilder::Build(schemasOwned.view.seriesMetadata, seriesId, 0, 0, owner, seriesMetadata);
+	SeriesInfoOwned seriesInfoOwned;
+	std::string builderError;
+	Ensure(SeriesInfoBuilder::Build(schemasOwned.view.seriesMetadata, seriesId, 0, 0, owner, seriesMetadata, seriesInfoOwned, builderError),
+		"series_metadata is invalid: " + builderError);
 
 	TxEnvelope tx = CreateTokenSeriesTxHelper::BuildTx(cfg.carbonTokenId.value(), seriesInfoOwned.View(), owner);
 
@@ -680,7 +685,10 @@ static void RunMintNft(const Config& cfg)
 	const Bytes32 owner(keys.GetPublicKey());
 
 	const std::vector<MetadataField> nftMetadata = ParseMetadataFields(cfg.nftMetadataRaw, "nft_metadata");
-	const ByteArray rom = PhantasmaNftRomBuilder::BuildAndSerialize(schemasOwned.view.rom, nftMetadata);
+	ByteArray rom;
+	std::string builderError;
+	Ensure(PhantasmaNftRomBuilder::BuildAndSerialize(schemasOwned.view.rom, nftMetadata, rom, builderError),
+		"nft_metadata is invalid: " + builderError);
 	const PhantasmaNftMintInfo token{
 		(const intx_pod&)cfg.phantasmaSeriesId.value(),
 		ByteView{ rom.data(), rom.size() },
@@ -690,7 +698,9 @@ static void RunMintNft(const Config& cfg)
 	std::cout << "Minting NFT through deterministic chain-generated id flow using phantasma series ID "
 		<< cfg.phantasmaSeriesId->ToStringUnsigned() << std::endl;
 
-	TxEnvelope tx = MintPhantasmaNonFungibleTxHelper::BuildTx(cfg.carbonTokenId.value(), owner, owner, 1, &token);
+	TxEnvelope tx;
+	Ensure(MintPhantasmaNonFungibleTxHelper::BuildTx(cfg.carbonTokenId.value(), owner, owner, 1, &token, tx, builderError),
+		"the mint cannot be built: " + builderError);
 
 	CurlClient http(cfg.rpc);
 	PhantasmaAPI api(http);

@@ -36,7 +36,24 @@ struct TokenSchemasOwned {
 
 	TokenSchemasOwned() = default;
 
-	TokenSchemas View() const { return view; }
+	// `view` points into the three vectors of THIS object, so a copy of it would point into the
+	// object it was copied from. Rebind repoints it here, and View answers a schema that already is.
+	void Rebind()
+	{
+		view.seriesMetadata.numFields = (uint32_t)seriesFields.size();
+		view.seriesMetadata.fields = seriesFields.empty() ? nullptr : seriesFields.data();
+		view.rom.numFields = (uint32_t)romFields.size();
+		view.rom.fields = romFields.empty() ? nullptr : romFields.data();
+		view.ram.numFields = (uint32_t)ramFields.size();
+		view.ram.fields = ramFields.empty() ? nullptr : ramFields.data();
+	}
+
+	TokenSchemas View() const
+	{
+		TokenSchemasOwned copy = *this;
+		copy.Rebind();
+		return copy.view;
+	}
 };
 
 struct FieldType {
@@ -216,21 +233,25 @@ struct MetadataHelper {
 		return nullptr;
 	}
 
-	static ByteArray GetOptionalBytesField(const std::vector<MetadataField>& fields, const std::string& name)
+	// Answers true with an empty value when the field is absent, which is what "optional" means here,
+	// and false only when a present field cannot be read.
+	static bool GetOptionalBytesField(const std::vector<MetadataField>& fields, const std::string& name, ByteArray& out, std::string& outError)
 	{
 		const MetadataField* found = FindMetadataField(fields, name);
 		if( !found )
 		{
-			return {};
+			out = {};
+			return true;
 		}
-		return EnsureBytes(name, found->value);
+		return EnsureBytes(name, found->value, out, outError);
 	}
 
-	static void PushMetadataField(
+	static bool PushMetadataField(
 	    const VmNamedVariableSchema& fieldSchema,
 	    std::vector<VmNamedDynamicVariable>& fields,
 	    const std::vector<MetadataField>& metadataFields,
-	    Allocator& alloc)
+	    Allocator& alloc,
+	    std::string& outError)
 	{
 		const MetadataField* found = nullptr;
 		for( const auto& field : metadataFields )
@@ -254,26 +275,35 @@ struct MetadataHelper {
 			}
 			if( caseMismatch )
 			{
-				PHANTASMA_EXCEPTION_MESSAGE(
-				    "Metadata field case mismatch",
-				    "Metadata field '" + std::string(fieldSchema.name.c_str()) +
-				        "' provided in incorrect case: '" + caseMismatch->name + "'");
+				const std::string invalid = "Metadata field '" + std::string(fieldSchema.name.c_str()) +
+				                            "' provided in incorrect case: '" + caseMismatch->name + "'";
+				PHANTASMA_EXCEPTION_MESSAGE("Metadata field case mismatch", invalid);
+				outError = invalid;
+				return false;
 			}
 
-			PHANTASMA_EXCEPTION_MESSAGE(
-			    "Metadata field missing",
-			    "Metadata field '" + std::string(fieldSchema.name.c_str()) + "' is mandatory");
+			const std::string missing = "Metadata field '" + std::string(fieldSchema.name.c_str()) + "' is mandatory";
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata field missing", missing);
+			outError = missing;
+			return false;
 		}
 
-		const VmDynamicVariable normalized = NormalizeMetadataValue(fieldSchema.schema, fieldSchema.name.c_str(), found->value, alloc);
+		VmDynamicVariable normalized;
+		if( !NormalizeMetadataValue(fieldSchema.schema, fieldSchema.name.c_str(), found->value, alloc, normalized, outError) )
+		{
+			return false;
+		}
 		fields.push_back(VmNamedDynamicVariable{ fieldSchema.name, normalized });
+		return true;
 	}
 
-	static VmDynamicVariable NormalizeMetadataValue(
+	static bool NormalizeMetadataValue(
 	    const VmVariableSchema& schema,
 	    const std::string& fieldName,
 	    const MetadataValue& value,
-	    Allocator& alloc)
+	    Allocator& alloc,
+	    VmDynamicVariable& out,
+	    std::string& outError)
 	{
 		const uint8_t raw = (uint8_t)schema.type;
 		const bool isArray = (raw & (uint8_t)VmType::Array) != 0;
@@ -281,14 +311,15 @@ struct MetadataHelper {
 		{
 			if( value.kind != MetadataValue::Kind::Array )
 			{
-				PHANTASMA_EXCEPTION_MESSAGE(
-				    "Metadata field type mismatch",
-				    "Metadata field '" + fieldName + "' must be provided as an array");
+				const std::string invalid = "Metadata field '" + fieldName + "' must be provided as an array";
+				PHANTASMA_EXCEPTION_MESSAGE("Metadata field type mismatch", invalid);
+				outError = invalid;
+				return false;
 			}
 			const VmType baseType = (VmType)(raw & ~(uint8_t)VmType::Array);
-			return NormalizeArrayValue(baseType, fieldName, value.arrayValue, schema.structure, alloc);
+			return NormalizeArrayValue(baseType, fieldName, value.arrayValue, schema.structure, alloc, out, outError);
 		}
-		return NormalizeScalarValue(schema.type, fieldName, value, schema.structure, alloc);
+		return NormalizeScalarValue(schema.type, fieldName, value, schema.structure, alloc, out, outError);
 	}
 
   private:
@@ -307,14 +338,19 @@ struct MetadataHelper {
 		return text.substr(start, end - start);
 	}
 
-	static ByteArray DecodeHex(const std::string& fieldName, const std::string& hex)
+	// Every helper below answers false and fills outError instead of raising alone. PHANTASMA_EXCEPTION
+	// does nothing in the default build, so a guard that only raises validates nothing there and the
+	// code after it runs on the input it rejected. The file already answers this way in
+	// TokenSchemasBuilder::Verify.
+	static bool DecodeHex(const std::string& fieldName, const std::string& hex, ByteArray& out, std::string& outError)
 	{
+		const std::string invalid = "Metadata field '" + fieldName + "' must be a byte array or hex string";
 		std::string trimmed = TrimWhitespace(hex);
 		if( trimmed.empty() )
 		{
-			PHANTASMA_EXCEPTION_MESSAGE(
-			    "Metadata bytes invalid",
-			    "Metadata field '" + fieldName + "' must be a byte array or hex string");
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata bytes invalid", invalid);
+			outError = invalid;
+			return false;
 		}
 		if( trimmed.rfind("0x", 0) == 0 || trimmed.rfind("0X", 0) == 0 )
 		{
@@ -322,236 +358,315 @@ struct MetadataHelper {
 		}
 		if( trimmed.empty() )
 		{
-			return {};
+			out = {};
+			return true;
 		}
 		if( (trimmed.size() % 2) != 0 )
 		{
-			PHANTASMA_EXCEPTION_MESSAGE(
-			    "Metadata bytes invalid",
-			    "Metadata field '" + fieldName + "' must be a byte array or hex string");
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata bytes invalid", invalid);
+			outError = invalid;
+			return false;
 		}
 
 		try
 		{
-			return Base16::Decode(trimmed.c_str(), (int)trimmed.size());
+			out = Base16::Decode(trimmed.c_str(), (int)trimmed.size());
+			return true;
 		}
 		catch( ... )
 		{
-			PHANTASMA_EXCEPTION_MESSAGE(
-			    "Metadata bytes invalid",
-			    "Metadata field '" + fieldName + "' must be a byte array or hex string");
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata bytes invalid", invalid);
+			outError = invalid;
+			return false;
 		}
-		return {};
 	}
 
-	static ByteArray EnsureBytes(const std::string& fieldName, const MetadataValue& value)
+	static bool EnsureBytes(const std::string& fieldName, const MetadataValue& value, ByteArray& out, std::string& outError)
 	{
 		switch( value.kind )
 		{
 		case MetadataValue::Kind::Bytes:
-			return value.bytesValue;
+			out = value.bytesValue;
+			return true;
 		case MetadataValue::Kind::String:
-			return DecodeHex(fieldName, value.stringValue);
+			return DecodeHex(fieldName, value.stringValue, out, outError);
 		default:
 			break;
 		}
-		PHANTASMA_EXCEPTION_MESSAGE(
-		    "Metadata bytes invalid",
-		    "Metadata field '" + fieldName + "' must be a byte array or hex string");
-		return {};
+		const std::string invalid = "Metadata field '" + fieldName + "' must be a byte array or hex string";
+		PHANTASMA_EXCEPTION_MESSAGE("Metadata bytes invalid", invalid);
+		outError = invalid;
+		return false;
 	}
 
-	static ByteArray EnsureFixedBytes(const std::string& fieldName, const MetadataValue& value, size_t expectedLength)
+	static bool EnsureFixedBytes(const std::string& fieldName, const MetadataValue& value, size_t expectedLength, ByteArray& out, std::string& outError)
 	{
-		ByteArray bytes = EnsureBytes(fieldName, value);
-		if( bytes.size() != expectedLength )
+		if( !EnsureBytes(fieldName, value, out, outError) )
 		{
-			PHANTASMA_EXCEPTION_MESSAGE(
-			    "Metadata bytes invalid",
-			    "Metadata field '" + fieldName + "' must be exactly " + std::to_string(expectedLength) + " bytes");
+			return false;
 		}
-		return bytes;
+		if( out.size() != expectedLength )
+		{
+			const std::string invalid = "Metadata field '" + fieldName + "' must be exactly " + std::to_string(expectedLength) + " bytes";
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata bytes invalid", invalid);
+			outError = invalid;
+			return false;
+		}
+		return true;
 	}
 
-	static Bytes16 EnsureBytes16(const std::string& fieldName, const MetadataValue& value)
+	static bool EnsureBytes16(const std::string& fieldName, const MetadataValue& value, Bytes16& out, std::string& outError)
 	{
 		if( value.kind == MetadataValue::Kind::Bytes16 )
 		{
-			return value.bytes16Value;
+			out = value.bytes16Value;
+			return true;
 		}
-		return Bytes16(EnsureFixedBytes(fieldName, value, Bytes16::length));
+		ByteArray bytes;
+		if( !EnsureFixedBytes(fieldName, value, Bytes16::length, bytes, outError) )
+		{
+			return false;
+		}
+		out = Bytes16(bytes);
+		return true;
 	}
 
-	static Bytes32 EnsureBytes32(const std::string& fieldName, const MetadataValue& value)
+	static bool EnsureBytes32(const std::string& fieldName, const MetadataValue& value, Bytes32& out, std::string& outError)
 	{
 		if( value.kind == MetadataValue::Kind::Bytes32 )
 		{
-			return value.bytes32Value;
+			out = value.bytes32Value;
+			return true;
 		}
-		return Bytes32(EnsureFixedBytes(fieldName, value, Bytes32::length));
+		ByteArray bytes;
+		if( !EnsureFixedBytes(fieldName, value, Bytes32::length, bytes, outError) )
+		{
+			return false;
+		}
+		out = Bytes32(bytes);
+		return true;
 	}
 
-	static Bytes64 EnsureBytes64(const std::string& fieldName, const MetadataValue& value)
+	static bool EnsureBytes64(const std::string& fieldName, const MetadataValue& value, Bytes64& out, std::string& outError)
 	{
 		if( value.kind == MetadataValue::Kind::Bytes64 )
 		{
-			return value.bytes64Value;
+			out = value.bytes64Value;
+			return true;
 		}
-		return Bytes64(EnsureFixedBytes(fieldName, value, Bytes64::length));
+		ByteArray bytes;
+		if( !EnsureFixedBytes(fieldName, value, Bytes64::length, bytes, outError) )
+		{
+			return false;
+		}
+		out = Bytes64(bytes);
+		return true;
 	}
 
-	static std::string EnsureNonEmptyString(const std::string& fieldName, const MetadataValue& value)
+	static bool EnsureNonEmptyString(const std::string& fieldName, const MetadataValue& value, std::string& out, std::string& outError)
 	{
 		if( value.kind != MetadataValue::Kind::String )
 		{
-			PHANTASMA_EXCEPTION_MESSAGE(
-			    "Metadata string invalid",
-			    "Metadata field '" + fieldName + "' must be a string");
+			const std::string invalid = "Metadata field '" + fieldName + "' must be a string";
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata string invalid", invalid);
+			outError = invalid;
+			return false;
 		}
-		std::string trimmed = TrimWhitespace(value.stringValue);
-		if( trimmed.empty() )
+		out = TrimWhitespace(value.stringValue);
+		if( out.empty() )
 		{
-			PHANTASMA_EXCEPTION_MESSAGE(
-			    "Metadata string invalid",
-			    "Metadata field '" + fieldName + "' is mandatory");
+			const std::string invalid = "Metadata field '" + fieldName + "' is mandatory";
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata string invalid", invalid);
+			outError = invalid;
+			return false;
 		}
-		return trimmed;
+		return true;
 	}
 
-	static uint64_t EnsureIntegerInRange(
+	static bool EnsureIntegerInRange(
 	    const std::string& fieldName,
 	    const MetadataValue& value,
 	    int64_t min,
 	    int64_t max,
 	    uint64_t unsignedMax,
-	    const char* label)
+	    const char* label,
+	    uint64_t& out,
+	    std::string& outError)
 	{
+		const std::string outOfRange = "Metadata field '" + fieldName + "' must be between " + std::to_string(min) +
+		                               " and " + std::to_string(max) + " or between 0 and " + std::to_string(unsignedMax) +
+		                               " (" + label + ")";
 		if( value.kind == MetadataValue::Kind::Int64 )
 		{
 			const int64_t v = value.int64Value;
 			if( v < min || v > max )
 			{
-				PHANTASMA_EXCEPTION_MESSAGE(
-				    "Metadata integer invalid",
-				    "Metadata field '" + fieldName + "' must be between " + std::to_string(min) +
-				        " and " + std::to_string(max) + " or between 0 and " + std::to_string(unsignedMax) +
-				        " (" + label + ")");
+				PHANTASMA_EXCEPTION_MESSAGE("Metadata integer invalid", outOfRange);
+				outError = outOfRange;
+				return false;
 			}
-			return (uint64_t)v;
+			out = (uint64_t)v;
+			return true;
 		}
 		if( value.kind == MetadataValue::Kind::UInt64 )
 		{
 			const uint64_t v = value.uint64Value;
 			if( v > unsignedMax )
 			{
-				PHANTASMA_EXCEPTION_MESSAGE(
-				    "Metadata integer invalid",
-				    "Metadata field '" + fieldName + "' must be between " + std::to_string(min) +
-				        " and " + std::to_string(max) + " or between 0 and " + std::to_string(unsignedMax) +
-				        " (" + label + ")");
+				PHANTASMA_EXCEPTION_MESSAGE("Metadata integer invalid", outOfRange);
+				outError = outOfRange;
+				return false;
 			}
-			return v;
+			out = v;
+			return true;
 		}
 
-		PHANTASMA_EXCEPTION_MESSAGE(
-		    "Metadata integer invalid",
-		    "Metadata field '" + fieldName + "' must be a number");
-		return 0;
+		const std::string notANumber = "Metadata field '" + fieldName + "' must be a number";
+		PHANTASMA_EXCEPTION_MESSAGE("Metadata integer invalid", notANumber);
+		outError = notANumber;
+		return false;
 	}
 
-	static VmDynamicVariable NormalizeScalarValue(
+	static bool NormalizeScalarValue(
 	    VmType type,
 	    const std::string& fieldName,
 	    const MetadataValue& value,
 	    const VmStructSchema& structSchema,
-	    Allocator& alloc)
+	    Allocator& alloc,
+	    VmDynamicVariable& out,
+	    std::string& outError)
 	{
 		switch( type )
 		{
 		case VmType::String: {
-			const std::string text = EnsureNonEmptyString(fieldName, value);
-			return VmDynamicVariable(alloc.Clone(text.c_str()));
+			std::string text;
+			if( !EnsureNonEmptyString(fieldName, value, text, outError) )
+				return false;
+			out = VmDynamicVariable(alloc.Clone(text.c_str()));
+			return true;
 		}
 		case VmType::Int8: {
-			const uint64_t raw = EnsureIntegerInRange(fieldName, value, -0x80, 0x7f, 0xff, "Int8");
-			return VmDynamicVariable((uint8_t)raw);
+			uint64_t raw = 0;
+			if( !EnsureIntegerInRange(fieldName, value, -0x80, 0x7f, 0xff, "Int8", raw, outError) )
+				return false;
+			out = VmDynamicVariable((uint8_t)raw);
+			return true;
 		}
 		case VmType::Int16: {
-			const uint64_t raw = EnsureIntegerInRange(fieldName, value, -0x8000, 0x7fff, 0xffff, "Int16");
-			return VmDynamicVariable((uint16_t)raw);
+			uint64_t raw = 0;
+			if( !EnsureIntegerInRange(fieldName, value, -0x8000, 0x7fff, 0xffff, "Int16", raw, outError) )
+				return false;
+			out = VmDynamicVariable((uint16_t)raw);
+			return true;
 		}
 		case VmType::Int32: {
-			const uint64_t raw = EnsureIntegerInRange(fieldName, value, -0x80000000LL, 0x7fffffffLL, 0xffffffffULL, "Int32");
-			return VmDynamicVariable((uint32_t)raw);
+			uint64_t raw = 0;
+			if( !EnsureIntegerInRange(fieldName, value, -0x80000000LL, 0x7fffffffLL, 0xffffffffULL, "Int32", raw, outError) )
+				return false;
+			out = VmDynamicVariable((uint32_t)raw);
+			return true;
 		}
 		case VmType::Int64: {
-			const uint64_t raw = EnsureIntegerInRange(
-			    fieldName,
-			    value,
-			    std::numeric_limits<int64_t>::min(),
-			    std::numeric_limits<int64_t>::max(),
-			    std::numeric_limits<uint64_t>::max(),
-			    "Int64");
-			return VmDynamicVariable((uint64_t)raw);
+			uint64_t raw = 0;
+			if( !EnsureIntegerInRange(
+			        fieldName,
+			        value,
+			        std::numeric_limits<int64_t>::min(),
+			        std::numeric_limits<int64_t>::max(),
+			        std::numeric_limits<uint64_t>::max(),
+			        "Int64",
+			        raw,
+			        outError) )
+				return false;
+			out = VmDynamicVariable((uint64_t)raw);
+			return true;
 		}
 		case VmType::Int256: {
 			if( value.kind == MetadataValue::Kind::Int256 )
 			{
-				return VmDynamicVariable(value.int256Value);
+				out = VmDynamicVariable(value.int256Value);
+				return true;
 			}
 			if( value.kind == MetadataValue::Kind::UInt256 )
 			{
-				return VmDynamicVariable(value.uint256Value);
+				out = VmDynamicVariable(value.uint256Value);
+				return true;
 			}
 			if( value.kind == MetadataValue::Kind::Int64 )
 			{
-				return VmDynamicVariable(int256(value.int64Value));
+				out = VmDynamicVariable(int256(value.int64Value));
+				return true;
 			}
 			if( value.kind == MetadataValue::Kind::UInt64 )
 			{
-				return VmDynamicVariable(uint256(value.uint64Value));
+				out = VmDynamicVariable(uint256(value.uint64Value));
+				return true;
 			}
-			PHANTASMA_EXCEPTION_MESSAGE(
-			    "Metadata integer invalid",
-			    "Metadata field '" + fieldName + "' must be a number (Int256)");
-			break;
+			const std::string invalid = "Metadata field '" + fieldName + "' must be a number (Int256)";
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata integer invalid", invalid);
+			outError = invalid;
+			return false;
 		}
 		case VmType::Bytes: {
-			const ByteArray bytes = EnsureBytes(fieldName, value);
-			const ByteView view = alloc.Clone(ByteView{ bytes.data(), bytes.size() });
-			return VmDynamicVariable(view);
+			ByteArray bytes;
+			if( !EnsureBytes(fieldName, value, bytes, outError) )
+				return false;
+			out = VmDynamicVariable(alloc.Clone(ByteView{ bytes.data(), bytes.size() }));
+			return true;
 		}
-		case VmType::Bytes16:
-			return VmDynamicVariable(EnsureBytes16(fieldName, value));
-		case VmType::Bytes32:
-			return VmDynamicVariable(EnsureBytes32(fieldName, value));
-		case VmType::Bytes64:
-			return VmDynamicVariable(EnsureBytes64(fieldName, value));
+		case VmType::Bytes16: {
+			Bytes16 bytes;
+			if( !EnsureBytes16(fieldName, value, bytes, outError) )
+				return false;
+			out = VmDynamicVariable(bytes);
+			return true;
+		}
+		case VmType::Bytes32: {
+			Bytes32 bytes;
+			if( !EnsureBytes32(fieldName, value, bytes, outError) )
+				return false;
+			out = VmDynamicVariable(bytes);
+			return true;
+		}
+		case VmType::Bytes64: {
+			Bytes64 bytes;
+			if( !EnsureBytes64(fieldName, value, bytes, outError) )
+				return false;
+			out = VmDynamicVariable(bytes);
+			return true;
+		}
 		case VmType::Struct: {
-			const VmDynamicStruct str = NormalizeStructValue(fieldName, structSchema, value, alloc);
-			return VmDynamicVariable(str);
+			VmDynamicStruct structure;
+			if( !NormalizeStructValue(fieldName, structSchema, value, alloc, structure, outError) )
+				return false;
+			out = VmDynamicVariable(structure);
+			return true;
 		}
 		default:
 			break;
 		}
 
-		PHANTASMA_EXCEPTION_MESSAGE(
-		    "Metadata field unsupported",
-		    "Metadata field '" + fieldName + "' has unsupported type");
-		return VmDynamicVariable();
+		const std::string unsupported = "Metadata field '" + fieldName + "' has unsupported type";
+		PHANTASMA_EXCEPTION_MESSAGE("Metadata field unsupported", unsupported);
+		outError = unsupported;
+		return false;
 	}
 
-	static VmDynamicVariable NormalizeArrayValue(
+	static bool NormalizeArrayValue(
 	    VmType type,
 	    const std::string& fieldName,
 	    const std::vector<MetadataValue>& values,
 	    const VmStructSchema& structSchema,
-	    Allocator& alloc)
+	    Allocator& alloc,
+	    VmDynamicVariable& out,
+	    std::string& outError)
 	{
 		const uint32_t count = (uint32_t)values.size();
-		VmDynamicVariable out;
+		out = VmDynamicVariable();
 		out.type = (VmType)((uint8_t)VmType::Array | (uint8_t)type);
 		out.arrayLength = count;
+		const auto element = [&](uint32_t i)
+		{ return fieldName + "[" + std::to_string(i) + "]"; };
 
 		switch( type )
 		{
@@ -559,57 +674,69 @@ struct MetadataHelper {
 			const char** arr = alloc.Alloc<const char*>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				const std::string text = EnsureNonEmptyString(fieldName + "[" + std::to_string(i) + "]", values[i]);
+				std::string text;
+				if( !EnsureNonEmptyString(element(i), values[i], text, outError) )
+					return false;
 				arr[i] = alloc.Clone(text.c_str());
 			}
 			out.data.stringArray = arr;
-			return out;
+			return true;
 		}
 		case VmType::Int8: {
 			uint8_t* arr = alloc.Alloc<uint8_t>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				const uint64_t raw = EnsureIntegerInRange(fieldName + "[" + std::to_string(i) + "]", values[i], -0x80, 0x7f, 0xff, "Int8");
+				uint64_t raw = 0;
+				if( !EnsureIntegerInRange(element(i), values[i], -0x80, 0x7f, 0xff, "Int8", raw, outError) )
+					return false;
 				arr[i] = (uint8_t)raw;
 			}
 			out.data.int8Array = arr;
-			return out;
+			return true;
 		}
 		case VmType::Int16: {
 			uint16_t* arr = alloc.Alloc<uint16_t>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				const uint64_t raw = EnsureIntegerInRange(fieldName + "[" + std::to_string(i) + "]", values[i], -0x8000, 0x7fff, 0xffff, "Int16");
+				uint64_t raw = 0;
+				if( !EnsureIntegerInRange(element(i), values[i], -0x8000, 0x7fff, 0xffff, "Int16", raw, outError) )
+					return false;
 				arr[i] = (uint16_t)raw;
 			}
 			out.data.int16Array = arr;
-			return out;
+			return true;
 		}
 		case VmType::Int32: {
 			uint32_t* arr = alloc.Alloc<uint32_t>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				const uint64_t raw = EnsureIntegerInRange(fieldName + "[" + std::to_string(i) + "]", values[i], -0x80000000LL, 0x7fffffffLL, 0xffffffffULL, "Int32");
+				uint64_t raw = 0;
+				if( !EnsureIntegerInRange(element(i), values[i], -0x80000000LL, 0x7fffffffLL, 0xffffffffULL, "Int32", raw, outError) )
+					return false;
 				arr[i] = (uint32_t)raw;
 			}
 			out.data.int32Array = arr;
-			return out;
+			return true;
 		}
 		case VmType::Int64: {
 			uint64_t* arr = alloc.Alloc<uint64_t>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				const uint64_t raw = EnsureIntegerInRange(
-				    fieldName + "[" + std::to_string(i) + "]",
-				    values[i],
-				    std::numeric_limits<int64_t>::min(),
-				    std::numeric_limits<int64_t>::max(),
-				    std::numeric_limits<uint64_t>::max(),
-				    "Int64");
+				uint64_t raw = 0;
+				if( !EnsureIntegerInRange(
+				        element(i),
+				        values[i],
+				        std::numeric_limits<int64_t>::min(),
+				        std::numeric_limits<int64_t>::max(),
+				        std::numeric_limits<uint64_t>::max(),
+				        "Int64",
+				        raw,
+				        outError) )
+					return false;
 				arr[i] = raw;
 			}
 			out.data.int64Array = arr;
-			return out;
+			return true;
 		}
 		case VmType::Int256: {
 			uint256* arr = alloc.Alloc<uint256>(count);
@@ -634,81 +761,92 @@ struct MetadataHelper {
 				}
 				else
 				{
-					PHANTASMA_EXCEPTION_MESSAGE(
-					    "Metadata integer invalid",
-					    "Metadata field '" + fieldName + "[" + std::to_string(i) + "]' must be a number (Int256)");
+					const std::string invalid = "Metadata field '" + element(i) + "' must be a number (Int256)";
+					PHANTASMA_EXCEPTION_MESSAGE("Metadata integer invalid", invalid);
+					outError = invalid;
+					return false;
 				}
 			}
 			out.data.int256Array = arr;
-			return out;
+			return true;
 		}
 		case VmType::Bytes: {
 			ByteView* arr = alloc.Alloc<ByteView>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				const ByteArray bytes = EnsureBytes(fieldName + "[" + std::to_string(i) + "]", values[i]);
+				ByteArray bytes;
+				if( !EnsureBytes(element(i), values[i], bytes, outError) )
+					return false;
 				arr[i] = alloc.Clone(ByteView{ bytes.data(), bytes.size() });
 			}
 			out.data.bytesArray = arr;
-			return out;
+			return true;
 		}
 		case VmType::Bytes16: {
 			Bytes16* arr = alloc.Alloc<Bytes16>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				arr[i] = EnsureBytes16(fieldName + "[" + std::to_string(i) + "]", values[i]);
+				if( !EnsureBytes16(element(i), values[i], arr[i], outError) )
+					return false;
 			}
 			out.data.bytes16Array = arr;
-			return out;
+			return true;
 		}
 		case VmType::Bytes32: {
 			Bytes32* arr = alloc.Alloc<Bytes32>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				arr[i] = EnsureBytes32(fieldName + "[" + std::to_string(i) + "]", values[i]);
+				if( !EnsureBytes32(element(i), values[i], arr[i], outError) )
+					return false;
 			}
 			out.data.bytes32Array = arr;
-			return out;
+			return true;
 		}
 		case VmType::Bytes64: {
 			Bytes64* arr = alloc.Alloc<Bytes64>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				arr[i] = EnsureBytes64(fieldName + "[" + std::to_string(i) + "]", values[i]);
+				if( !EnsureBytes64(element(i), values[i], arr[i], outError) )
+					return false;
 			}
 			out.data.bytes64Array = arr;
-			return out;
+			return true;
 		}
 		case VmType::Struct: {
 			VmDynamicStruct* arr = alloc.Alloc<VmDynamicStruct>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				arr[i] = NormalizeStructValue(fieldName + "[" + std::to_string(i) + "]", structSchema, values[i], alloc);
+				if( !NormalizeStructValue(element(i), structSchema, values[i], alloc, arr[i], outError) )
+					return false;
 			}
 			out.data.structureArray = { structSchema, arr };
-			return out;
+			return true;
 		}
 		default:
 			break;
 		}
 
-		PHANTASMA_EXCEPTION_MESSAGE(
-		    "Metadata field unsupported",
-		    "Metadata field '" + fieldName + "' has unsupported array type");
-		return VmDynamicVariable();
+		const std::string unsupported = "Metadata field '" + fieldName + "' has unsupported array type";
+		PHANTASMA_EXCEPTION_MESSAGE("Metadata field unsupported", unsupported);
+		outError = unsupported;
+		return false;
 	}
 
-	static VmDynamicStruct NormalizeStructValue(
+	static bool NormalizeStructValue(
 	    const std::string& fieldName,
 	    const VmStructSchema& structSchema,
 	    const MetadataValue& value,
-	    Allocator& alloc)
+	    Allocator& alloc,
+	    VmDynamicStruct& out,
+	    std::string& outError)
 	{
+		const std::string shape = "Metadata field '" + fieldName + "' must be provided as an object or array of fields";
 		if( structSchema.numFields == 0 )
 		{
-			PHANTASMA_EXCEPTION_MESSAGE(
-			    "Metadata struct invalid",
-			    "Metadata field '" + fieldName + "' is missing struct schema");
+			const std::string invalid = "Metadata field '" + fieldName + "' is missing struct schema";
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata struct invalid", invalid);
+			outError = invalid;
+			return false;
 		}
 
 		std::vector<std::pair<std::string, MetadataValue>> provided;
@@ -722,9 +860,9 @@ struct MetadataHelper {
 			{
 				if( item.kind != MetadataValue::Kind::Struct )
 				{
-					PHANTASMA_EXCEPTION_MESSAGE(
-					    "Metadata struct invalid",
-					    "Metadata field '" + fieldName + "' must be provided as an object or array of fields");
+					PHANTASMA_EXCEPTION_MESSAGE("Metadata struct invalid", shape);
+					outError = shape;
+					return false;
 				}
 				const auto nameIt = std::find_if(
 				    item.structValue.begin(),
@@ -736,26 +874,21 @@ struct MetadataHelper {
 				    item.structValue.end(),
 				    [](const std::pair<std::string, MetadataValue>& f)
 				    { return f.first == "value"; });
-				if( nameIt == item.structValue.end() || valueIt == item.structValue.end() )
+				if( nameIt == item.structValue.end() || valueIt == item.structValue.end() ||
+				    nameIt->second.kind != MetadataValue::Kind::String )
 				{
-					PHANTASMA_EXCEPTION_MESSAGE(
-					    "Metadata struct invalid",
-					    "Metadata field '" + fieldName + "' must be provided as an object or array of fields");
-				}
-				if( nameIt->second.kind != MetadataValue::Kind::String )
-				{
-					PHANTASMA_EXCEPTION_MESSAGE(
-					    "Metadata struct invalid",
-					    "Metadata field '" + fieldName + "' must be provided as an object or array of fields");
+					PHANTASMA_EXCEPTION_MESSAGE("Metadata struct invalid", shape);
+					outError = shape;
+					return false;
 				}
 				provided.push_back({ nameIt->second.stringValue, valueIt->second });
 			}
 		}
 		else
 		{
-			PHANTASMA_EXCEPTION_MESSAGE(
-			    "Metadata struct invalid",
-			    "Metadata field '" + fieldName + "' must be provided as an object or array of fields");
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata struct invalid", shape);
+			outError = shape;
+			return false;
 		}
 
 		std::vector<VmNamedDynamicVariable> fields;
@@ -777,23 +910,20 @@ struct MetadataHelper {
 				    provided.end(),
 				    [&](const std::pair<std::string, MetadataValue>& f)
 				    { return EqualsIgnoreCase(f.first, childName); });
-				if( caseMismatch != provided.end() )
-				{
-					PHANTASMA_EXCEPTION_MESSAGE(
-					    "Metadata struct invalid",
-					    "Metadata field '" + childName + "' provided in incorrect case inside '" + fieldName +
-					        "': '" + caseMismatch->first + "'");
-				}
-				PHANTASMA_EXCEPTION_MESSAGE(
-				    "Metadata struct invalid",
-				    "Metadata field '" + fieldName + "." + childName + "' is mandatory");
+				const std::string invalid =
+				    caseMismatch != provided.end()
+				        ? "Metadata field '" + childName + "' provided in incorrect case inside '" + fieldName + "': '" + caseMismatch->first + "'"
+				        : "Metadata field '" + fieldName + "." + childName + "' is mandatory";
+				PHANTASMA_EXCEPTION_MESSAGE("Metadata struct invalid", invalid);
+				outError = invalid;
+				return false;
 			}
 
-			const VmDynamicVariable normalized = NormalizeMetadataValue(
-			    childSchema.schema,
-			    fieldName + "." + childName,
-			    exact->second,
-			    alloc);
+			VmDynamicVariable normalized;
+			if( !NormalizeMetadataValue(childSchema.schema, fieldName + "." + childName, exact->second, alloc, normalized, outError) )
+			{
+				return false;
+			}
 			fields.push_back(VmNamedDynamicVariable{ childSchema.name, normalized });
 		}
 
@@ -806,9 +936,10 @@ struct MetadataHelper {
 			    { return EqualsIgnoreCase(s.name.c_str(), providedField.first); });
 			if( !known )
 			{
-				PHANTASMA_EXCEPTION_MESSAGE(
-				    "Metadata struct invalid",
-				    "Metadata field '" + fieldName + "' received unknown property '" + providedField.first + "'");
+				const std::string invalid = "Metadata field '" + fieldName + "' received unknown property '" + providedField.first + "'";
+				PHANTASMA_EXCEPTION_MESSAGE("Metadata struct invalid", invalid);
+				outError = invalid;
+				return false;
 			}
 		}
 
@@ -817,7 +948,8 @@ struct MetadataHelper {
 		{
 			storage[i] = fields[i];
 		}
-		return VmDynamicStruct::Sort((uint32_t)fields.size(), storage);
+		out = VmDynamicStruct::Sort((uint32_t)fields.size(), storage);
+		return true;
 	}
 };
 
@@ -987,73 +1119,64 @@ struct TokenSchemasBuilder {
 		return owned;
 	}
 
-	static TokenSchemasOwned BuildFromFields(const std::vector<FieldType>& seriesFields, const std::vector<FieldType>& romFields, const std::vector<FieldType>& ramFields)
+	// Answers false without touching `out` when a field name is empty, duplicated, differs only in
+	// case, or when the finished schema fails Verify.
+	static bool BuildFromFields(
+	    const std::vector<FieldType>& seriesFields,
+	    const std::vector<FieldType>& romFields,
+	    const std::vector<FieldType>& ramFields,
+	    TokenSchemasOwned& out,
+	    std::string& outError)
 	{
 		TokenSchemasOwned owned;
-		std::string error;
-
+		const auto add = [&outError](std::vector<VmNamedVariableSchema>& dest, const std::vector<FieldType>& fields)
 		{
-			const std::vector<FieldType> defaults = {
-				FieldType{ StandardMeta::id.c_str(), VmType::Int256 },
-				FieldType{ "mode", VmType::Int8 },
-				FieldType{ "rom", VmType::Bytes },
-			};
-			for( const auto& f : defaults )
+			for( const auto& f : fields )
 			{
-				if( !AddField(owned.seriesFields, f, error) )
+				if( !AddField(dest, f, outError) )
 				{
-					PHANTASMA_EXCEPTION_MESSAGE("Invalid token schema", error);
+					PHANTASMA_EXCEPTION_MESSAGE("Invalid token schema", outError);
+					return false;
 				}
 			}
-			for( const auto& f : seriesFields )
-			{
-				if( !AddField(owned.seriesFields, f, error) )
-				{
-					PHANTASMA_EXCEPTION_MESSAGE("Invalid token schema", error);
-				}
-			}
-			owned.view.seriesMetadata = VmStructSchema::Sort((uint32_t)owned.seriesFields.size(), owned.seriesFields.data(), false);
-		}
+			return true;
+		};
 
+		const std::vector<FieldType> seriesDefaults = {
+			FieldType{ StandardMeta::id.c_str(), VmType::Int256 },
+			FieldType{ "mode", VmType::Int8 },
+			FieldType{ "rom", VmType::Bytes },
+		};
+		if( !add(owned.seriesFields, seriesDefaults) || !add(owned.seriesFields, seriesFields) )
 		{
-			const std::vector<FieldType> defaults = {
-				FieldType{ StandardMeta::id.c_str(), VmType::Int256 },
-				FieldType{ "rom", VmType::Bytes },
-			};
-			for( const auto& f : defaults )
-			{
-				if( !AddField(owned.romFields, f, error) )
-				{
-					PHANTASMA_EXCEPTION_MESSAGE("Invalid token schema", error);
-				}
-			}
-			for( const auto& f : romFields )
-			{
-				if( !AddField(owned.romFields, f, error) )
-				{
-					PHANTASMA_EXCEPTION_MESSAGE("Invalid token schema", error);
-				}
-			}
-			owned.view.rom = VmStructSchema::Sort((uint32_t)owned.romFields.size(), owned.romFields.data(), false);
+			return false;
 		}
+		owned.view.seriesMetadata = VmStructSchema::Sort((uint32_t)owned.seriesFields.size(), owned.seriesFields.data(), false);
 
+		const std::vector<FieldType> romDefaults = {
+			FieldType{ StandardMeta::id.c_str(), VmType::Int256 },
+			FieldType{ "rom", VmType::Bytes },
+		};
+		if( !add(owned.romFields, romDefaults) || !add(owned.romFields, romFields) )
 		{
-			for( const auto& f : ramFields )
-			{
-				if( !AddField(owned.ramFields, f, error) )
-				{
-					PHANTASMA_EXCEPTION_MESSAGE("Invalid token schema", error);
-				}
-			}
-			const bool allowExtras = owned.ramFields.empty();
-			owned.view.ram = VmStructSchema::Sort((uint32_t)owned.ramFields.size(), owned.ramFields.data(), allowExtras);
+			return false;
 		}
+		owned.view.rom = VmStructSchema::Sort((uint32_t)owned.romFields.size(), owned.romFields.data(), false);
 
-		if( !Verify(owned, error) )
+		if( !add(owned.ramFields, ramFields) )
 		{
-			PHANTASMA_EXCEPTION_MESSAGE("Invalid token schema", error);
+			return false;
 		}
-		return owned;
+		owned.view.ram = VmStructSchema::Sort((uint32_t)owned.ramFields.size(), owned.ramFields.data(), owned.ramFields.empty());
+
+		if( !Verify(owned, outError) )
+		{
+			PHANTASMA_EXCEPTION_MESSAGE("Invalid token schema", outError);
+			return false;
+		}
+		out = owned;
+		out.Rebind();
+		return true;
 	}
 
 	static ByteArray BuildAndSerialize(const TokenSchemas* tokenSchemas)
@@ -1092,45 +1215,55 @@ struct TokenSchemasBuilder {
 	}
 
 #ifdef PHANTASMA_RAPIDJSON
-	static TokenSchemasOwned FromJson(const std::string& json)
+	// Answers false without touching `out` when the document is not an object, an array is missing or
+	// malformed, a type name is unknown, or the schema the fields build fails BuildFromFields.
+	static bool FromJson(const std::string& json, TokenSchemasOwned& out, std::string& outError)
 	{
 		rapidjson::Document doc;
 		doc.Parse<rapidjson::kParseDefaultFlags>(json.c_str());
 		if( doc.HasParseError() || !doc.IsObject() )
 		{
 			PHANTASMA_EXCEPTION_MESSAGE("TokenSchemas json invalid", "token_schemas must be a JSON object");
+			outError = "token_schemas must be a JSON object";
+			return false;
 		}
 
-		auto parseArray = [&](const char* key) -> std::vector<FieldType>
+		auto parseArray = [&](const char* key, std::vector<FieldType>& fields) -> bool
 		{
 			if( !doc.HasMember(key) || !doc[key].IsArray() )
 			{
-				PHANTASMA_EXCEPTION_MESSAGE("TokenSchemas json invalid", std::string(key) + " must be an array");
+				outError = std::string(key) + " must be an array";
+				PHANTASMA_EXCEPTION_MESSAGE("TokenSchemas json invalid", outError);
+				return false;
 			}
-			std::vector<FieldType> fields;
 			for( auto it = doc[key].Begin(); it != doc[key].End(); ++it )
 			{
 				const rapidjson::Value& v = *it;
 				if( !v.IsObject() || !v.HasMember("name") || !v.HasMember("type") || !v["name"].IsString() || !v["type"].IsString() )
 				{
-					PHANTASMA_EXCEPTION_MESSAGE("TokenSchemas json invalid", std::string(key) + " entries must contain name and type");
+					outError = std::string(key) + " entries must contain name and type";
+					PHANTASMA_EXCEPTION_MESSAGE("TokenSchemas json invalid", outError);
+					return false;
 				}
-				bool error = false;
-				const VmType vmType = VmTypeFromString(v["type"].GetString(), &error);
-				if( error )
+				bool unknownType = false;
+				const VmType vmType = VmTypeFromString(v["type"].GetString(), &unknownType);
+				if( unknownType )
 				{
-					PHANTASMA_EXCEPTION_MESSAGE("TokenSchemas json invalid", "Unknown VmType: " + std::string(v["type"].GetString()));
+					outError = "Unknown VmType: " + std::string(v["type"].GetString());
+					PHANTASMA_EXCEPTION_MESSAGE("TokenSchemas json invalid", outError);
+					return false;
 				}
 				fields.push_back(FieldType{ v["name"].GetString(), vmType });
 			}
-			return fields;
+			return true;
 		};
 
-		const std::vector<FieldType> seriesFields = parseArray("seriesMetadata");
-		const std::vector<FieldType> romFields = parseArray("rom");
-		const std::vector<FieldType> ramFields = parseArray("ram");
-
-		return BuildFromFields(seriesFields, romFields, ramFields);
+		std::vector<FieldType> seriesFields, romFields, ramFields;
+		if( !parseArray("seriesMetadata", seriesFields) || !parseArray("rom", romFields) || !parseArray("ram", ramFields) )
+		{
+			return false;
+		}
+		return BuildFromFields(seriesFields, romFields, ramFields, out, outError);
 	}
 #endif
 };

@@ -344,65 +344,81 @@ struct TokenMetadataBuilder {
 		return true;
 	}
 
-	static void ValidateIcon(const std::string& icon)
+	// Answers false and fills outError on bad input. A guard that only raises PHANTASMA_EXCEPTION
+	// validates nothing in the default build, where that macro expands to nothing, so every builder
+	// below reports its refusal the way TokenSchemasBuilder::Verify already does.
+	static bool ValidateIcon(const std::string& icon, std::string& outError)
 	{
+		const char* notADataUri = "Token metadata icon must be a base64-encoded data URI (PNG, JPEG, or WebP)";
+		const char* emptyPayload = "Token metadata icon must include a non-empty base64 payload";
+		const char* notBase64 = "Token metadata icon payload is not valid base64";
+		const auto refuse = [&outError](const char* why)
+		{
+			PHANTASMA_EXCEPTION(why);
+			outError = why;
+			return false;
+		};
+
 		const std::string trimmed = TrimWhitespace(icon);
 		if( trimmed.empty() )
 		{
-			PHANTASMA_EXCEPTION("Token metadata icon must be a base64-encoded data URI (PNG, JPEG, or WebP)");
+			return refuse(notADataUri);
 		}
 
 		if( !StartsWithCaseInsensitive(trimmed, "data:image/") )
 		{
-			PHANTASMA_EXCEPTION("Token metadata icon must be a base64-encoded data URI (PNG, JPEG, or WebP)");
+			return refuse(notADataUri);
 		}
 		const auto comma = trimmed.find(',');
 		if( comma == std::string::npos )
 		{
-			PHANTASMA_EXCEPTION("Token metadata icon must be a base64-encoded data URI (PNG, JPEG, or WebP)");
+			return refuse(notADataUri);
 		}
 		const std::string mimePart = trimmed.substr(0, comma);
 		if( !StartsWithCaseInsensitive(mimePart, "data:image/png;base64") &&
 		    !StartsWithCaseInsensitive(mimePart, "data:image/jpeg;base64") &&
 		    !StartsWithCaseInsensitive(mimePart, "data:image/webp;base64") )
 		{
-			PHANTASMA_EXCEPTION("Token metadata icon must be a base64-encoded data URI (PNG, JPEG, or WebP)");
+			return refuse(notADataUri);
 		}
 
 		std::string payload = TrimWhitespace(trimmed.substr(comma + 1));
 		if( payload.empty() )
 		{
-			PHANTASMA_EXCEPTION("Token metadata icon must include a non-empty base64 payload");
+			return refuse(emptyPayload);
 		}
 
 		if( (payload.size() % 4) != 0 )
 		{
-			PHANTASMA_EXCEPTION("Token metadata icon payload is not valid base64");
+			return refuse(notBase64);
 		}
 		for( const char c : payload )
 		{
 			if( !IsBase64Char(c) )
 			{
-				PHANTASMA_EXCEPTION("Token metadata icon payload is not valid base64");
+				return refuse(notBase64);
 			}
 		}
 
 		const ByteArray decoded = Base64::Decode(payload.c_str(), (int)payload.size());
 		if( decoded.empty() )
 		{
-			PHANTASMA_EXCEPTION("Token metadata icon must include a non-empty base64 payload");
+			return refuse(emptyPayload);
 		}
 
 		const String encoded = Base64::Encode(decoded);
 		const std::string encodedStr(encoded.begin(), encoded.end());
 		if( TrimEndEquals(encodedStr) != TrimEndEquals(payload) )
 		{
-			PHANTASMA_EXCEPTION("Token metadata icon payload is not valid base64");
+			return refuse(notBase64);
 		}
+		return true;
 	}
 
   public:
-	static ByteArray BuildAndSerialize(const std::vector<std::pair<std::string, std::string>>& metaFields)
+	// Answers false without touching `out` when the metadata is refused: it is missing a mandatory
+	// field, or its icon is not a base64 data URI of a known image type.
+	static bool BuildAndSerialize(const std::vector<std::pair<std::string, std::string>>& metaFields, ByteArray& out, std::string& outError)
 	{
 		const std::vector<std::string> required = { "name", "icon", "url", "description" };
 		std::map<std::string, std::string> lookup;
@@ -413,6 +429,8 @@ struct TokenMetadataBuilder {
 		if( lookup.size() < required.size() )
 		{
 			PHANTASMA_EXCEPTION("Token metadata is mandatory");
+			outError = "Token metadata is mandatory";
+			return false;
 		}
 		std::vector<std::string> missing;
 		for( const auto& field : required )
@@ -433,8 +451,13 @@ struct TokenMetadataBuilder {
 				list += missing[i];
 			}
 			PHANTASMA_EXCEPTION_MESSAGE("Token metadata is missing required fields", list.c_str());
+			outError = "Token metadata is missing required fields: " + list;
+			return false;
 		}
-		ValidateIcon(lookup.at("icon"));
+		if( !ValidateIcon(lookup.at("icon"), outError) )
+		{
+			return false;
+		}
 
 		std::vector<std::string> storage;
 		storage.reserve(lookup.size());
@@ -449,21 +472,27 @@ struct TokenMetadataBuilder {
 		}
 
 		VmDynamicStruct meta = VmDynamicStruct::Sort((uint32_t)fields.size(), fields.data());
-		ByteArray buffer;
-		WriteView w(buffer);
+		out.clear();
+		WriteView w(out);
 		Write(meta, w);
-		return buffer;
+		return true;
 	}
 };
 
 struct TokenSeriesMetadataBuilder {
-	static ByteArray BuildAndSerialize(
+	static bool BuildAndSerialize(
 	    const VmStructSchema& seriesMetadataSchema,
 	    const uint256& phantasmaSeriesId,
-	    const std::vector<MetadataField>& metadata)
+	    const std::vector<MetadataField>& metadata,
+	    ByteArray& out,
+	    std::string& outError)
 	{
 		Allocator alloc;
-		const ByteArray sharedRom = MetadataHelper::GetOptionalBytesField(metadata, "rom");
+		ByteArray sharedRom;
+		if( !MetadataHelper::GetOptionalBytesField(metadata, "rom", sharedRom, outError) )
+		{
+			return false;
+		}
 
 		std::vector<VmNamedDynamicVariable> fields = {
 			VmNamedDynamicVariable{ StandardMeta::id, VmDynamicVariable(phantasmaSeriesId) },
@@ -488,80 +517,104 @@ struct TokenSeriesMetadataBuilder {
 				continue;
 			}
 
-			MetadataHelper::PushMetadataField(schemaField, fields, metadata, alloc);
+			if( !MetadataHelper::PushMetadataField(schemaField, fields, metadata, alloc, outError) )
+			{
+				return false;
+			}
 		}
 
 		VmDynamicStruct meta = VmDynamicStruct::Sort((uint32_t)fields.size(), fields.data());
-		ByteArray buffer;
-		WriteView w(buffer);
+		out.clear();
+		WriteView w(out);
 		Write(meta, seriesMetadataSchema, w);
-		return buffer;
+		return true;
 	}
 
-	static ByteArray BuildAndSerialize(
+	static bool BuildAndSerialize(
 	    const VmStructSchema& seriesMetadataSchema,
 	    const int256& phantasmaSeriesId,
-	    const std::vector<MetadataField>& metadata)
+	    const std::vector<MetadataField>& metadata,
+	    ByteArray& out,
+	    std::string& outError)
 	{
-		return BuildAndSerialize(seriesMetadataSchema, phantasmaSeriesId.Unsigned(), metadata);
+		return BuildAndSerialize(seriesMetadataSchema, phantasmaSeriesId.Unsigned(), metadata, out, outError);
 	}
 };
 
 struct SeriesInfoBuilder {
-	static SeriesInfoOwned Build(
+	static bool Build(
 	    const VmStructSchema& seriesMetadataSchema,
 	    const uint256& phantasmaSeriesId,
 	    uint32_t maxMint,
 	    uint32_t maxSupply,
 	    const Bytes32& ownerPublicKey,
-	    const std::vector<MetadataField>& metadata)
+	    const std::vector<MetadataField>& metadata,
+	    SeriesInfoOwned& out,
+	    std::string& outError)
 	{
 		SeriesInfoOwned owned;
 		owned.view.maxMint = maxMint;
 		owned.view.maxSupply = maxSupply;
 		owned.view.owner = ownerPublicKey;
-		owned.metadataStorage = TokenSeriesMetadataBuilder::BuildAndSerialize(seriesMetadataSchema, phantasmaSeriesId, metadata);
+		if( !TokenSeriesMetadataBuilder::BuildAndSerialize(seriesMetadataSchema, phantasmaSeriesId, metadata, owned.metadataStorage, outError) )
+		{
+			return false;
+		}
 		owned.view.rom = VmStructSchema{};
 		owned.view.ram = VmStructSchema{};
-		return owned;
+		out = owned;
+		return true;
 	}
 
-	static SeriesInfoOwned Build(
+	static bool Build(
 	    const VmStructSchema& seriesMetadataSchema,
 	    const int256& phantasmaSeriesId,
 	    uint32_t maxMint,
 	    uint32_t maxSupply,
 	    const Bytes32& ownerPublicKey,
-	    const std::vector<MetadataField>& metadata)
+	    const std::vector<MetadataField>& metadata,
+	    SeriesInfoOwned& out,
+	    std::string& outError)
 	{
-		return Build(seriesMetadataSchema, phantasmaSeriesId.Unsigned(), maxMint, maxSupply, ownerPublicKey, metadata);
+		return Build(seriesMetadataSchema, phantasmaSeriesId.Unsigned(), maxMint, maxSupply, ownerPublicKey, metadata, out, outError);
 	}
 
-	static SeriesInfoOwned Build(const int256& phantasmaSeriesId, uint32_t maxMint, uint32_t maxSupply, const Bytes32& ownerPublicKey, const ByteArray* metadata = nullptr)
+	// The already-serialized form: the caller holds the series metadata bytes. It is required, and
+	// this overload used to dereference a null pointer in a build with exceptions disabled.
+	static bool Build(uint32_t maxMint, uint32_t maxSupply, const Bytes32& ownerPublicKey, const ByteArray& metadata, SeriesInfoOwned& out, std::string& outError)
 	{
-		if( !metadata )
+		if( metadata.empty() )
 		{
 			PHANTASMA_EXCEPTION("series metadata is required");
+			outError = "series metadata is required";
+			return false;
 		}
 		SeriesInfoOwned owned;
 		owned.view.maxMint = maxMint;
 		owned.view.maxSupply = maxSupply;
 		owned.view.owner = ownerPublicKey;
-		owned.metadataStorage = *metadata;
+		owned.metadataStorage = metadata;
 		owned.view.rom = VmStructSchema{};
 		owned.view.ram = VmStructSchema{};
-		return owned;
+		out = owned;
+		return true;
 	}
 };
 
 struct NftRomBuilder {
-	static ByteArray BuildAndSerialize(
+	static bool BuildAndSerialize(
 	    const VmStructSchema& nftRomSchema,
 	    const uint256& phantasmaNftId,
-	    const std::vector<MetadataField>& metadata)
+	    const std::vector<MetadataField>& metadata,
+	    ByteArray& out,
+	    std::string& outError)
 	{
 		Allocator alloc;
-		const ByteArray rom = MetadataHelper::GetOptionalBytesField(metadata, "rom");
+		ByteArray rom;
+		if( !MetadataHelper::GetOptionalBytesField(metadata, "rom", rom, outError) )
+		{
+			return false;
+		}
 
 		std::vector<VmNamedDynamicVariable> fields = {
 			VmNamedDynamicVariable{ StandardMeta::id, VmDynamicVariable(phantasmaNftId) },
@@ -585,25 +638,30 @@ struct NftRomBuilder {
 				continue;
 			}
 
-			MetadataHelper::PushMetadataField(schemaField, fields, metadata, alloc);
+			if( !MetadataHelper::PushMetadataField(schemaField, fields, metadata, alloc, outError) )
+			{
+				return false;
+			}
 		}
 
 		VmDynamicStruct romStruct = VmDynamicStruct::Sort((uint32_t)fields.size(), fields.data());
-		ByteArray buffer;
-		WriteView w(buffer);
+		out.clear();
+		WriteView w(out);
 		Write(romStruct, nftRomSchema, w);
-		return buffer;
+		return true;
 	}
 
-	static ByteArray BuildAndSerialize(
+	static bool BuildAndSerialize(
 	    const VmStructSchema& nftRomSchema,
 	    const int256& phantasmaNftId,
-	    const std::vector<MetadataField>& metadata)
+	    const std::vector<MetadataField>& metadata,
+	    ByteArray& out,
+	    std::string& outError)
 	{
-		return BuildAndSerialize(nftRomSchema, phantasmaNftId.Unsigned(), metadata);
+		return BuildAndSerialize(nftRomSchema, phantasmaNftId.Unsigned(), metadata, out, outError);
 	}
 
-	static ByteArray BuildAndSerialize(
+	static bool BuildAndSerialize(
 	    const int256& phantasmaNftId,
 	    const std::string& name,
 	    const std::string& description,
@@ -611,11 +669,12 @@ struct NftRomBuilder {
 	    const std::string& infoURL,
 	    uint32_t royalties,
 	    const ByteArray& rom,
-	    const TokenSchemas* tokenSchemas)
+	    const TokenSchemas* tokenSchemas,
+	    ByteArray& out,
+	    std::string& outError)
 	{
-		const TokenSchemasOwned tsOwned = tokenSchemas
-		                                      ? TokenSchemasOwned{ *tokenSchemas, {}, {}, {} }
-		                                      : TokenSchemasBuilder::PrepareStandardTokenSchemas();
+		TokenSchemasOwned tsOwned = tokenSchemas ? TokenSchemasOwned{ *tokenSchemas, {}, {}, {} }
+		                                         : TokenSchemasBuilder::PrepareStandardTokenSchemas();
 
 		std::vector<MetadataField> metadata = {
 			MetadataField{ "name", MetadataValue::FromString(name) },
@@ -626,7 +685,7 @@ struct NftRomBuilder {
 			MetadataField{ "rom", MetadataValue::FromBytes(rom) },
 		};
 
-		return BuildAndSerialize(tsOwned.view.rom, phantasmaNftId, metadata);
+		return BuildAndSerialize(tsOwned.view.rom, phantasmaNftId, metadata, out, outError);
 	}
 };
 
@@ -636,16 +695,21 @@ struct PhantasmaNftRomBuilder {
 		return EqualsIgnoreCase(name, StandardMeta::id.c_str()) || EqualsIgnoreCase(name, "rom");
 	}
 
-	static ByteArray BuildAndSerialize(
+	static bool BuildAndSerialize(
 	    const VmStructSchema& nftRomSchema,
-	    const std::vector<MetadataField>& metadata)
+	    const std::vector<MetadataField>& metadata,
+	    ByteArray& out,
+	    std::string& outError)
 	{
 		Allocator alloc;
 		for( const auto& field : metadata )
 		{
 			if( IsReservedFieldName(field.name) )
 			{
-				PHANTASMA_EXCEPTION(std::string("Metadata field '") + field.name + "' is reserved for chain-owned deterministic mint fields");
+				const std::string reserved = "Metadata field '" + field.name + "' is reserved for chain-owned deterministic mint fields";
+				PHANTASMA_EXCEPTION(reserved.c_str());
+				outError = reserved;
+				return false;
 			}
 		}
 
@@ -662,7 +726,10 @@ struct PhantasmaNftRomBuilder {
 			}
 
 			publicSchemaFields.push_back(schemaField);
-			MetadataHelper::PushMetadataField(schemaField, fields, metadata, alloc);
+			if( !MetadataHelper::PushMetadataField(schemaField, fields, metadata, alloc, outError) )
+			{
+				return false;
+			}
 		}
 
 		VmStructSchema publicSchema;
@@ -671,23 +738,24 @@ struct PhantasmaNftRomBuilder {
 		publicSchema.flags = nftRomSchema.flags;
 
 		VmDynamicStruct romStruct = VmDynamicStruct::Sort((uint32_t)fields.size(), fields.data());
-		ByteArray buffer;
-		WriteView w(buffer);
+		out.clear();
+		WriteView w(out);
 		Write(romStruct, publicSchema, w);
-		return buffer;
+		return true;
 	}
 
-	static ByteArray BuildAndSerialize(
+	static bool BuildAndSerialize(
 	    const std::string& name,
 	    const std::string& description,
 	    const std::string& imageURL,
 	    const std::string& infoURL,
 	    uint32_t royalties,
-	    const TokenSchemas* tokenSchemas)
+	    const TokenSchemas* tokenSchemas,
+	    ByteArray& out,
+	    std::string& outError)
 	{
-		const TokenSchemasOwned tsOwned = tokenSchemas
-		                                      ? TokenSchemasOwned{ *tokenSchemas, {}, {}, {} }
-		                                      : TokenSchemasBuilder::PrepareStandardTokenSchemas();
+		TokenSchemasOwned tsOwned = tokenSchemas ? TokenSchemasOwned{ *tokenSchemas, {}, {}, {} }
+		                                         : TokenSchemasBuilder::PrepareStandardTokenSchemas();
 
 		std::vector<MetadataField> metadata = {
 			MetadataField{ "name", MetadataValue::FromString(name) },
@@ -697,32 +765,49 @@ struct PhantasmaNftRomBuilder {
 			MetadataField{ "royalties", MetadataValue::FromInt64((int64_t)royalties) },
 		};
 
-		return BuildAndSerialize(tsOwned.view.rom, metadata);
+		return BuildAndSerialize(tsOwned.view.rom, metadata, out, outError);
 	}
 };
 
 struct TokenInfoBuilder {
-	static TokenInfoOwned Build(const std::string& symbol, const intx& maxSupply, bool isNFT, uint8_t decimals, const Bytes32& creatorPublicKey, const ByteArray& metadata, const ByteArray* tokenSchemas = nullptr)
+	// Answers false without touching `out` when the symbol is not A-Z, the metadata is empty, an NFT
+	// supply does not fit int64, or an NFT is built without token schemas. The schemas overload used
+	// to dereference a null pointer in a build with exceptions disabled.
+	static bool Build(
+	    const std::string& symbol,
+	    const intx& maxSupply,
+	    bool isNFT,
+	    uint8_t decimals,
+	    const Bytes32& creatorPublicKey,
+	    const ByteArray& metadata,
+	    const ByteArray& tokenSchemas,
+	    TokenInfoOwned& out,
+	    std::string& outError)
 	{
+		const auto refuse = [&outError](const char* why)
+		{
+			PHANTASMA_EXCEPTION(why);
+			outError = why;
+			return false;
+		};
 		if( symbol.empty() )
 		{
-			PHANTASMA_EXCEPTION("Symbol validation error: Empty string is invalid");
+			return refuse("Symbol validation error: Empty string is invalid");
 		}
 		if( symbol.size() > 255 )
 		{
-			PHANTASMA_EXCEPTION("Symbol validation error: Too long");
+			return refuse("Symbol validation error: Too long");
 		}
 		for( char c : symbol )
 		{
 			if( c < 'A' || c > 'Z' )
 			{
-				PHANTASMA_EXCEPTION("Symbol validation error: Anything outside A-Z is forbidden (digits, accents, etc.)");
+				return refuse("Symbol validation error: Anything outside A-Z is forbidden (digits, accents, etc.)");
 			}
 		}
-
 		if( metadata.empty() )
 		{
-			PHANTASMA_EXCEPTION("metadata is required");
+			return refuse("metadata is required");
 		}
 
 		const bool isUnlimited = !maxSupply;
@@ -735,7 +820,7 @@ struct TokenInfoBuilder {
 		{
 			if( !isInt64Safe )
 			{
-				PHANTASMA_EXCEPTION("NFT maximum supply must fit into Int64");
+				return refuse("NFT maximum supply must fit into Int64");
 			}
 			owned.view.flags = TokenFlags_NonFungible;
 		}
@@ -749,13 +834,28 @@ struct TokenInfoBuilder {
 		owned.metadataStorage = metadata;
 		if( isNFT )
 		{
-			if( !tokenSchemas )
+			if( tokenSchemas.empty() )
 			{
-				PHANTASMA_EXCEPTION("tokenSchemas is required for NFTs");
+				return refuse("tokenSchemas is required for NFTs");
 			}
-			owned.schemasStorage = *tokenSchemas;
+			owned.schemasStorage = tokenSchemas;
 		}
-		return owned;
+		out = owned;
+		return true;
+	}
+
+	// A fungible token carries no schemas.
+	static bool Build(
+	    const std::string& symbol,
+	    const intx& maxSupply,
+	    bool isNFT,
+	    uint8_t decimals,
+	    const Bytes32& creatorPublicKey,
+	    const ByteArray& metadata,
+	    TokenInfoOwned& out,
+	    std::string& outError)
+	{
+		return Build(symbol, maxSupply, isNFT, decimals, creatorPublicKey, metadata, ByteArray{}, out, outError);
 	}
 };
 

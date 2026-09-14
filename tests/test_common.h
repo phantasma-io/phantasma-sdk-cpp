@@ -59,6 +59,19 @@ inline void ExpectNoThrow(TestContext& ctx, const std::string& name, Fn&& fn)
 	}
 }
 
+// Reports a call that must be REFUSED. The builders answer false and say why, so this works in the
+// default build too, where PHANTASMA_EXCEPTION expands to nothing and ExpectThrowContains can only
+// report a pass.
+inline void ExpectRefused(TestContext& ctx, const std::string& name, const std::string& needle, bool answered, const std::string& error)
+{
+	if( answered )
+	{
+		Report(ctx, false, name, "the call was accepted");
+		return;
+	}
+	Report(ctx, error.find(needle) != std::string::npos, name, error);
+}
+
 template<typename Fn>
 inline void ExpectThrowContains(TestContext& ctx, const std::string& name, const std::string& needle, Fn&& fn)
 {

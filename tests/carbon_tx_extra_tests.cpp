@@ -69,10 +69,12 @@ void RunCarbonTxExtraTests(TestContext& ctx)
 	{
 		TxLimits limits{};
 		limits.expiry = expiry;
-		ExpectThrowContains(ctx, "MintPhantasmaNonFungibleTxHelper rejects null tokens pointer", "tokens is required", [&]()
-		    { (void)MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 1, nullptr, limits); });
-		ExpectThrowContains(ctx, "MintPhantasmaNonFungibleTxHelper rejects zero-count mint", "must not be empty", [&]()
-		    { (void)MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 0, nullptr, limits); });
+		TxEnvelope refused;
+		std::string error;
+		ExpectRefused(ctx, "MintPhantasmaNonFungibleTxHelper rejects null tokens pointer", "tokens is required",
+		    MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 1, nullptr, refused, error, limits), error);
+		ExpectRefused(ctx, "MintPhantasmaNonFungibleTxHelper rejects zero-count mint", "must not be empty",
+		    MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 0, nullptr, refused, error, limits), error);
 	}
 
 	// A builder carries no prices: the offer stays zero until the message is planned, and the
@@ -83,7 +85,10 @@ void RunCarbonTxExtraTests(TestContext& ctx)
 		tokens[1].phantasmaSeriesId.x() = intx((uint64_t)2);
 		tokens[2].phantasmaSeriesId.x() = intx((uint64_t)3);
 
-		const TxEnvelope unplanned = MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 3, tokens);
+		TxEnvelope unplanned;
+		std::string buildError;
+		Report(ctx, MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 3, tokens, unplanned, buildError),
+		    "MintPhantasmaNonFungibleTxHelper builds an unplanned mint", buildError);
 		Report(ctx, unplanned.msg.maxGas == 0 && unplanned.msg.maxData == 0,
 		    "a builder leaves the message unplanned");
 		Report(ctx, unplanned.msg.expiry > UnixTimeMs() && unplanned.msg.expiry <= UnixTimeMs() + DefaultExpiryMs,
@@ -93,7 +98,9 @@ void RunCarbonTxExtraTests(TestContext& ctx)
 		limits.maxGas = 30000;
 		limits.maxData = 123;
 		limits.expiry = expiry;
-		const TxEnvelope planned = MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 3, tokens, limits);
+		TxEnvelope planned;
+		Report(ctx, MintPhantasmaNonFungibleTxHelper::BuildTx(42, senderPub, receiverPub, 3, tokens, planned, buildError, limits),
+		    "MintPhantasmaNonFungibleTxHelper builds a mint with limits", buildError);
 		Report(ctx, planned.msg.maxGas == 30000 && planned.msg.maxData == 123 && planned.msg.expiry == expiry,
 		    "a builder writes the limits it was given");
 	}

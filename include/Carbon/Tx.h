@@ -5,6 +5,7 @@
 
 #include "../Numerics/Base16.h"
 #include <chrono>
+#include <utility>
 #include <limits>
 #include "DataBlockchain.h"
 #include "Modules.h"
@@ -287,21 +288,29 @@ struct MintNonFungibleTxHelper {
 };
 
 struct MintPhantasmaNonFungibleTxHelper {
-	static TxEnvelope BuildTx(
+	// Answers false without touching `out` when the token list is empty or absent. The envelope is
+	// returned through `out` because a builder that can refuse needs somewhere to say so.
+	static bool BuildTx(
 	    uint64_t tokenId,
 	    const Bytes32& senderPublicKey,
 	    const Bytes32& receiverPublicKey,
 	    uint32_t numTokens,
 	    const PhantasmaNftMintInfo* tokens,
+	    TxEnvelope& out,
+	    std::string& outError,
 	    const TxLimits& limits = {})
 	{
 		if( numTokens == 0 )
 		{
 			PHANTASMA_EXCEPTION("tokens must not be empty");
+			outError = "tokens must not be empty";
+			return false;
 		}
 		if( tokens == nullptr )
 		{
 			PHANTASMA_EXCEPTION("tokens is required when numTokens > 0");
+			outError = "tokens is required when numTokens > 0";
+			return false;
 		}
 
 		TxEnvelope env;
@@ -327,17 +336,22 @@ struct MintPhantasmaNonFungibleTxHelper {
 			ByteView{ env.buffers.back().data(), env.buffers.back().size() },
 			{}
 		};
-		return env;
+		// Moved, never copied: env.msg.call.args is a view into env.buffers, and a copy of the vector
+		// would leave that view pointing at the buffer of the envelope it was copied from.
+		out = std::move(env);
+		return true;
 	}
 
-	static TxEnvelope BuildTx(
+	static bool BuildTx(
 	    uint64_t tokenId,
 	    const Bytes32& senderPublicKey,
 	    const Bytes32& receiverPublicKey,
 	    const std::vector<PhantasmaNftMintInfo>& tokens,
+	    TxEnvelope& out,
+	    std::string& outError,
 	    const TxLimits& limits = {})
 	{
-		return BuildTx(tokenId, senderPublicKey, receiverPublicKey, (uint32_t)tokens.size(), tokens.empty() ? nullptr : &tokens.front(), limits);
+		return BuildTx(tokenId, senderPublicKey, receiverPublicKey, (uint32_t)tokens.size(), tokens.empty() ? nullptr : &tokens.front(), out, outError, limits);
 	}
 
 	static std::vector<PhantasmaNftMintResult> ParseResult(const std::string& resultHex)
