@@ -175,6 +175,26 @@ void AddArray(Builder& b, const Char* key, Args... args)
 	AddValues(b, args...);
 	b.w.EndArray();
 }
+// getAccountInfos takes its address list as an array INSIDE the params array, so the strings form
+// their own array ahead of whatever arguments follow them.
+inline void AddNestedStringArray(Builder& b, const String* values, int count)
+{
+	b.w.StartArray();
+	for( int i = 0; i != count; ++i )
+	{
+		b.w.String(values[i].c_str());
+	}
+	b.w.EndArray();
+}
+template<class... Args>
+void AddArrayWithNestedStringArray(Builder& b, const Char* key, const String* values, int count, Args... args)
+{
+	b.w.String(key);
+	b.w.StartArray();
+	AddNestedStringArray(b, values, count);
+	AddValues(b, args...);
+	b.w.EndArray();
+}
 } // namespace json
 
 typedef const rapidjson::Value& RapidJsonValueRef;

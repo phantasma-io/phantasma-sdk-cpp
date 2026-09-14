@@ -131,6 +131,20 @@ void AddArray(web::json::value& root, const Char* key, Args... args)
 	web::json::value& ar = (root[key] = web::json::value::array());
 	AddValues(0, ar, args...);
 }
+// getAccountInfos takes its address list as an array INSIDE the params array, so the strings form
+// their own array ahead of whatever arguments follow them.
+template<class... Args>
+void AddArrayWithNestedStringArray(web::json::value& root, const Char* key, const String* values, int count, Args... args)
+{
+	web::json::value& ar = (root[key] = web::json::value::array());
+	web::json::value nested = web::json::value::array();
+	for( int i = 0; i != count; ++i )
+	{
+		nested[i] = web::json::value::string(values[i]);
+	}
+	ar[0] = nested;
+	AddValues(1, ar, args...);
+}
 } // namespace json
 
 namespace rpc {
