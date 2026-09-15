@@ -587,10 +587,85 @@ void RunMultiSignerTests(TestContext& ctx)
 	}
 }
 
+// The native builders. Each one must produce the message type the chain prices, with the accounts
+// in the places that type names, and it must leave the offer at zero until a plan sets it.
+void RunNativeBuilderTests(TestContext& ctx)
+{
+	const Bytes32 owner = Address(1);
+	const Bytes32 to = Address(2);
+	const Bytes32 payer = Address(3);
+	const uint64_t instances[3] = { 11, 22, 33 };
+
+	{
+		const Blockchain::TxMsg msg = NativeTxHelper::TransferFungible({ owner, nullptr }, to, 5, 700);
+		Report(ctx,
+		    msg.type == TxTypes::TransferFungible && msg.gasFrom == owner && msg.transferFt.to == to &&
+		        msg.transferFt.tokenId == 5 && msg.transferFt.amount == 700 && msg.maxGas == 0 && msg.expiry != 0,
+		    "a fungible transfer is built unplanned, with the sender paying");
+	}
+	{
+		const Blockchain::TxMsg msg = NativeTxHelper::TransferFungible({ owner, &payer }, to, 5, 700);
+		Report(ctx,
+		    msg.type == TxTypes::TransferFungible_GasPayer && msg.gasFrom == payer &&
+		        msg.transferFtGasPayer.from == owner && msg.transferFtGasPayer.to == to,
+		    "naming a gas payer selects the two-signature transfer");
+	}
+	{
+		Blockchain::TxMsg msg;
+		std::string error;
+		const bool ok = NativeTxHelper::TransferNonFungible({ owner, nullptr }, to, 9, instances, 1, msg, error);
+		Report(ctx,
+		    ok && msg.type == TxTypes::TransferNonFungible_Single && msg.transferNftSingle.instanceId == 11,
+		    "one instance uses the single-instance type", error);
+	}
+	{
+		Blockchain::TxMsg msg;
+		std::string error;
+		const bool ok = NativeTxHelper::TransferNonFungible({ owner, &payer }, to, 9, instances, 3, msg, error);
+		Report(ctx,
+		    ok && msg.type == TxTypes::TransferNonFungible_Multi_GasPayer && msg.gasFrom == payer &&
+		        msg.transferNftMultiGasPayer.numInstanceIds == 3 &&
+		        msg.transferNftMultiGasPayer.instanceIds == instances,
+		    "three instances with a gas payer use the multi-instance gas-payer type", error);
+	}
+	{
+		Blockchain::TxMsg msg;
+		std::string error;
+		const bool ok = NativeTxHelper::TransferNonFungible({ owner, nullptr }, to, 9, instances, 0, msg, error);
+		ExpectRefused(ctx, "an NFT transfer refuses an empty instance list", "must not be empty", ok, error);
+	}
+	{
+		const Blockchain::TxMsg msg = NativeTxHelper::MintFungible(owner, to, 5, intx((uint64_t)900));
+		Report(ctx,
+		    msg.type == TxTypes::MintFungible && msg.gasFrom == owner && msg.mintFungible.to == to &&
+		        msg.mintFungible.amount.x() == intx((uint64_t)900),
+		    "a mint is paid for by the token owner");
+	}
+	{
+		const Blockchain::TxMsg msg = NativeTxHelper::BurnFungible({ owner, &payer }, 5, intx((uint64_t)3));
+		Report(ctx,
+		    msg.type == TxTypes::BurnFungible_GasPayer && msg.gasFrom == payer && msg.burnFungibleGasPayer.from == owner,
+		    "a gas-payer burn names the account the atoms leave");
+	}
+	{
+		const Blockchain::TxMsg msg = NativeTxHelper::BurnNonFungible({ owner, nullptr }, 9, 77);
+		Report(ctx, msg.type == TxTypes::BurnNonFungible && msg.burnNonFungible.instanceId == 77,
+		    "an NFT burn carries the instance");
+	}
+	{
+		// A builder writes the limits it is given, and the planner is what fills them normally.
+		const TxLimits limits{ 1234, 5678, 99 };
+		const Blockchain::TxMsg msg = NativeTxHelper::TransferFungible({ owner, nullptr }, to, 5, 700, limits);
+		Report(ctx, msg.maxGas == 1234 && msg.maxData == 5678 && msg.expiry == 99,
+		    "a builder writes the limits it was given");
+	}
+}
+
 } // namespace
 
 void RunTxReaderTests(testutil::TestContext& ctx)
 {
+	RunNativeBuilderTests(ctx);
 	RunMultiSignerTests(ctx);
 	RunRoundTripTests(ctx);
 	RunRefusalTests(ctx);

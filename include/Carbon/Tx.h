@@ -187,6 +187,164 @@ inline void Apply(phantasma::carbon::Blockchain::TxMsg& msg, const TxLimits& lim
 
 } // namespace TxLimitsDetail
 
+// Builders for the native transaction types: the transfers, mints and burns that need no VM script.
+//
+// A builder assembles the message and nothing else. The fee is planned afterwards from the message
+// itself with PlanFees, and the witnesses sign with TxMsgSigner. Without a plan the message carries
+// a zero offer, which no chain admits.
+//
+// The native types come in pairs. In the plain form the account whose tokens move also pays the gas
+// and signs alone. In the _GasPayer form a second account pays the gas and both sign, the payer
+// first. Naming a gas payer selects the second form.
+struct NativeTxHelper {
+	// The account whose tokens move, and optionally the account that pays the gas instead.
+	struct Parties {
+		Bytes32 from{};
+		const Bytes32* gasPayer = nullptr;
+	};
+
+	// Moves `amount` atoms of a fungible token. A big-fungible token whose balances pass int64 needs
+	// a module call instead, because this message carries the amount as a u64.
+	static Blockchain::TxMsg TransferFungible(
+	    const Parties& parties, const Bytes32& to, uint64_t tokenId, uint64_t amount, const TxLimits& limits = {})
+	{
+		if( parties.gasPayer )
+		{
+			Blockchain::TxMsg msg = Base(Blockchain::TxTypes::TransferFungible_GasPayer, *parties.gasPayer, limits);
+			msg.transferFtGasPayer = Blockchain::TxMsgTransferFungible_GasPayer{ to, parties.from, tokenId, amount };
+			return msg;
+		}
+		Blockchain::TxMsg msg = Base(Blockchain::TxTypes::TransferFungible, parties.from, limits);
+		msg.transferFt = Blockchain::TxMsgTransferFungible{ to, tokenId, amount };
+		return msg;
+	}
+
+	// Moves whole NFT instances. One instance uses the single-instance type and several use the
+	// multi-instance one, which is what the chain prices differently. `instanceIds` must outlive the
+	// message: the multi-instance forms point at it.
+	//
+	// Answers false without touching `out` when no instance is named.
+	static bool TransferNonFungible(
+	    const Parties& parties,
+	    const Bytes32& to,
+	    uint64_t tokenId,
+	    const uint64_t* instanceIds,
+	    uint32_t numInstanceIds,
+	    Blockchain::TxMsg& out,
+	    std::string& outError,
+	    const TxLimits& limits = {})
+	{
+		if( numInstanceIds == 0 || instanceIds == nullptr )
+		{
+			PHANTASMA_EXCEPTION("instanceIds must not be empty");
+			outError = "instanceIds must not be empty";
+			return false;
+		}
+		const bool single = numInstanceIds == 1;
+		if( parties.gasPayer )
+		{
+			Blockchain::TxMsg msg = Base(
+			    single ? Blockchain::TxTypes::TransferNonFungible_Single_GasPayer
+			           : Blockchain::TxTypes::TransferNonFungible_Multi_GasPayer,
+			    *parties.gasPayer, limits);
+			if( single )
+			{
+				msg.transferNftSingleGasPayer =
+				    Blockchain::TxMsgTransferNonFungible_Single_GasPayer{ to, parties.from, tokenId, instanceIds[0] };
+			}
+			else
+			{
+				msg.transferNftMultiGasPayer = Blockchain::TxMsgTransferNonFungible_Multi_GasPayer{};
+				msg.transferNftMultiGasPayer.to = to;
+				msg.transferNftMultiGasPayer.from = parties.from;
+				msg.transferNftMultiGasPayer.tokenId = tokenId;
+				msg.transferNftMultiGasPayer.numInstanceIds = numInstanceIds;
+				msg.transferNftMultiGasPayer.instanceIds = instanceIds;
+			}
+			out = msg;
+			return true;
+		}
+		Blockchain::TxMsg msg = Base(
+		    single ? Blockchain::TxTypes::TransferNonFungible_Single : Blockchain::TxTypes::TransferNonFungible_Multi,
+		    parties.from, limits);
+		if( single )
+		{
+			msg.transferNftSingle = Blockchain::TxMsgTransferNonFungible_Single{ to, tokenId, instanceIds[0] };
+		}
+		else
+		{
+			msg.transferNftMulti = Blockchain::TxMsgTransferNonFungible_Multi{};
+			msg.transferNftMulti.to = to;
+			msg.transferNftMulti.tokenId = tokenId;
+			msg.transferNftMulti.numInstanceIds = numInstanceIds;
+			msg.transferNftMulti.instanceIds = instanceIds;
+		}
+		out = msg;
+		return true;
+	}
+
+	// Mints fungible atoms. The token owner pays the gas and signs. The amount is an intx because a
+	// mint also serves a big-fungible token, whose balances do not fit a u64.
+	static Blockchain::TxMsg MintFungible(
+	    const Bytes32& owner, const Bytes32& to, uint64_t tokenId, const intx& amount, const TxLimits& limits = {})
+	{
+		Blockchain::TxMsg msg = Base(Blockchain::TxTypes::MintFungible, owner, limits);
+		msg.mintFungible = Blockchain::TxMsgMintFungible{};
+		msg.mintFungible.tokenId = tokenId;
+		msg.mintFungible.to = to;
+		msg.mintFungible.amount.x() = amount;
+		return msg;
+	}
+
+	// Burns fungible atoms out of `parties.from`.
+	static Blockchain::TxMsg BurnFungible(
+	    const Parties& parties, uint64_t tokenId, const intx& amount, const TxLimits& limits = {})
+	{
+		if( parties.gasPayer )
+		{
+			Blockchain::TxMsg msg = Base(Blockchain::TxTypes::BurnFungible_GasPayer, *parties.gasPayer, limits);
+			msg.burnFungibleGasPayer = Blockchain::TxMsgBurnFungible_GasPayer{};
+			msg.burnFungibleGasPayer.tokenId = tokenId;
+			msg.burnFungibleGasPayer.from = parties.from;
+			msg.burnFungibleGasPayer.amount.x() = amount;
+			return msg;
+		}
+		Blockchain::TxMsg msg = Base(Blockchain::TxTypes::BurnFungible, parties.from, limits);
+		msg.burnFungible = Blockchain::TxMsgBurnFungible{};
+		msg.burnFungible.tokenId = tokenId;
+		msg.burnFungible.amount.x() = amount;
+		return msg;
+	}
+
+	// Burns one NFT instance. Whatever that instance holds at its own address comes back to the
+	// burner, and the chain charges for each returned asset, which PlanFees prices from the list the
+	// caller reads with ReadInfusedAssets.
+	static Blockchain::TxMsg BurnNonFungible(
+	    const Parties& parties, uint64_t tokenId, uint64_t instanceId, const TxLimits& limits = {})
+	{
+		if( parties.gasPayer )
+		{
+			Blockchain::TxMsg msg = Base(Blockchain::TxTypes::BurnNonFungible_GasPayer, *parties.gasPayer, limits);
+			msg.burnNonFungibleGasPayer = Blockchain::TxMsgBurnNonFungible_GasPayer{ tokenId, parties.from, instanceId };
+			return msg;
+		}
+		Blockchain::TxMsg msg = Base(Blockchain::TxTypes::BurnNonFungible, parties.from, limits);
+		msg.burnNonFungible = Blockchain::TxMsgBurnNonFungible{ tokenId, instanceId };
+		return msg;
+	}
+
+  private:
+	static Blockchain::TxMsg Base(Blockchain::TxTypes type, const Bytes32& gasFrom, const TxLimits& limits)
+	{
+		Blockchain::TxMsg msg;
+		msg.type = type;
+		msg.gasFrom = gasFrom;
+		msg.payload = SmallString();
+		TxLimitsDetail::Apply(msg, limits);
+		return msg;
+	}
+};
+
 struct CreateTokenTxHelper {
 	static TxEnvelope BuildTx(const TokenInfo& tokenInfo, const Bytes32& creatorPublicKey, const TxLimits& limits = {})
 	{

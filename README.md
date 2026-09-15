@@ -221,6 +221,13 @@
      //    fee is planned.
      TxEnvelope env = CreateTokenTxHelper::BuildTx(tokenInfo, creatorPublicKey);
 
+ The transfers, mints and burns that need no VM script are built by `NativeTxHelper`:
+
+     Blockchain::TxMsg msg = NativeTxHelper::TransferFungible({ owner }, recipient, tokenId, 100);
+     // Naming a gas payer selects the two-signature form of the same operation:
+     Blockchain::TxMsg paid = NativeTxHelper::TransferFungible({ owner, &gasPayer }, recipient, tokenId, 100);
+
+
      // 2. Read the chain's prices once, then plan this message against them.
      const Blockchain::GasConfig config = ToGasConfig(api.GetGasConfig().gasConfig);
      FeePlanOptions options;
