@@ -356,8 +356,11 @@
    symbol, and that fee is the largest single price in the protocol. Sending a
    symbol that is already taken pays the fee and gets nothing back. Look the symbol
    up before sending.
- - `FormatTokenAmount` renders an atom count as a decimal string. KCAL has 10
-   decimals and SOUL has 8. `SummarizeFeePlan` renders a whole plan for display.
+ - `FormatTokenAmount` renders an atom count as a decimal string and
+   `ParseTokenAmount` reads one back. KCAL has 10 decimals and SOUL has 8. The
+   reader refuses an amount with more fractional digits than the token holds,
+   because those digits would be dropped and the caller would send something it
+   never wrote. `SummarizeFeePlan` renders a whole plan for display.
 
 ------------------------------------------------------------------------------
  Reading a Carbon transaction back

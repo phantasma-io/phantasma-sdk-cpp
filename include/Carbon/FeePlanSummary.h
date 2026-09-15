@@ -26,6 +26,65 @@ struct FeePlanSummary {
 // Answers an empty string for a decimals value the chain would never admit (the token contract
 // caps them at DomainSettings::MAX_TOKEN_DECIMALS), and raises PHANTASMA_EXCEPTION where exceptions
 // are enabled.
+// Reads a decimal amount into the token's atoms. "1.25" with 8 decimals is 125000000 atoms.
+//
+// Answers false without touching `out` on an empty string, on a character that is not a digit or the
+// single decimal point, on more fractional digits than the token has, and on a value past 64 bits. A
+// caller that takes an amount from a person needs all four refusals, because every one of them is a
+// number the chain would read as something else.
+inline bool ParseTokenAmount(const String& text, int decimals, uint64_t& out)
+{
+	if( text.empty() || decimals < 0 || decimals > 18 )
+	{
+		return false;
+	}
+	uint64_t value = 0;
+	int seenDecimals = -1;
+	for( size_t i = 0; i != text.size(); ++i )
+	{
+		const Char c = text[i];
+		if( c == (Char)'.' )
+		{
+			if( seenDecimals >= 0 )
+			{
+				return false;
+			}
+			seenDecimals = 0;
+			continue;
+		}
+		if( c < (Char)'0' || c > (Char)'9' )
+		{
+			return false;
+		}
+		if( seenDecimals >= 0 )
+		{
+			if( seenDecimals == decimals )
+			{
+				// More fractional digits than the token has would be silently dropped, and the
+				// caller would send an amount it did not write.
+				return false;
+			}
+			++seenDecimals;
+		}
+		const uint64_t digit = (uint64_t)(c - (Char)'0');
+		if( value > ((uint64_t)-1 - digit) / 10 )
+		{
+			return false;
+		}
+		value = value * 10 + digit;
+	}
+	for( int i = seenDecimals < 0 ? 0 : seenDecimals; i != decimals; ++i )
+	{
+		if( value > (uint64_t)-1 / 10 )
+		{
+			return false;
+		}
+		value *= 10;
+	}
+	out = value;
+	return true;
+}
+
 inline String FormatTokenAmount(uint64_t atoms, int decimals)
 {
 	if( decimals < 0 || decimals > DomainSettings::MAX_TOKEN_DECIMALS )

@@ -24,6 +24,8 @@
 #include "../include/Carbon/DataVm.h"
 #include "../include/Carbon/FeeInfusions.h"
 #include "../include/Carbon/Preflight.h"
+#include "../include/Carbon/Send.h"
+#include "../include/Carbon/FeePlanSummary.h"
 #include "../include/Utils/Timestamp.h"
 #include "../include/VM/ScriptBuilder.h"
 #include "../include/Blockchain/Transaction.h"

@@ -11,6 +11,7 @@ int main()
 	testcases::RunTokenBuilderValidationTests(ctx);
 	testcases::RunTokenSchemasWireTests(ctx);
 	testcases::RunPreflightSubjectTests(ctx);
+	testcases::RunTokenAmountTests(ctx);
 	testcases::RunAddressTests(ctx);
 	testcases::RunKeyPairTests(ctx);
 	testcases::RunEncodingRoundtripTests(ctx);

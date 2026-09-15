@@ -217,4 +217,27 @@ void RunPreflightSubjectTests(testutil::TestContext& ctx)
 	}
 }
 
+// A decimal amount a person typed, into the atoms the chain counts.
+void RunTokenAmountTests(testutil::TestContext& ctx)
+{
+	uint64_t atoms = 0;
+	Report(ctx, ParseTokenAmount(String("1.25"), 8, atoms) && atoms == 125000000, "a decimal amount becomes atoms");
+	Report(ctx, ParseTokenAmount(String("1"), 8, atoms) && atoms == 100000000, "a whole amount becomes atoms");
+	Report(ctx, ParseTokenAmount(String("0.0000000001"), 10, atoms) && atoms == 1, "the smallest KCAL amount is one atom");
+	Report(ctx, ParseTokenAmount(String("0"), 8, atoms) && atoms == 0, "zero is read");
+	Report(ctx, !ParseTokenAmount(String(""), 8, atoms), "an empty amount is refused");
+	Report(ctx, !ParseTokenAmount(String("1.2.3"), 8, atoms), "two decimal points are refused");
+	Report(ctx, !ParseTokenAmount(String("1,25"), 8, atoms), "a comma is refused");
+	Report(ctx, !ParseTokenAmount(String("-1"), 8, atoms), "a negative amount is refused");
+	// The refusal that matters most: a digit the token cannot hold would be dropped, and the caller
+	// would send an amount it never wrote.
+	Report(ctx, !ParseTokenAmount(String("1.123456789"), 8, atoms), "more fractional digits than the token has are refused");
+	Report(ctx, !ParseTokenAmount(String("184467440737.09551616"), 8, atoms), "an amount past 64 bits is refused");
+
+	// What FormatTokenAmount writes, ParseTokenAmount reads back.
+	const uint64_t original = 4260000000ull;
+	Report(ctx, ParseTokenAmount(FormatTokenAmount(original, 10), 10, atoms) && atoms == original,
+	    "an amount survives the round trip through its decimal form");
+}
+
 } // namespace testcases
