@@ -152,4 +152,69 @@ void RunTokenSchemasWireTests(testutil::TestContext& ctx)
 	    ToUpper(BytesToHex(copiedBlob)));
 }
 
+// What the pre-flight makes of a message, before any chain is asked. The chain-facing half needs an
+// HTTP client, which the test binary has none of; what is checked here is the part that decides
+// whether there is anything to ask about, and the symbol it would ask about.
+void RunPreflightSubjectTests(testutil::TestContext& ctx)
+{
+	const std::string wif = "KwPpBSByydVKqStGHAnZzQofCqhDmD2bfRgc9BmZqM3ZmsdWJw4d";
+	const PhantasmaKeys keys = PhantasmaKeys::FromWIF(wif.c_str(), (int)wif.size());
+	const Bytes32 owner = ToBytes32(keys.GetPublicKey());
+
+	ByteArray metadata;
+	std::string error;
+	const std::vector<std::pair<std::string, std::string>> metaFields = {
+		{ "name", "My test token!" },
+		{ "icon", SampleIcon() },
+		{ "url", "http://example.com" },
+		{ "description", "My test token description" },
+	};
+	if( !TokenMetadataBuilder::BuildAndSerialize(metaFields, metadata, error) )
+	{
+		Report(ctx, false, "the pre-flight fixture builds its metadata", error);
+		return;
+	}
+
+	TokenInfoOwned info;
+	if( !TokenInfoBuilder::Build("MYFEE", intx((uint64_t)0), false, 2, owner, metadata, info, error) )
+	{
+		Report(ctx, false, "the pre-flight fixture builds its token info", error);
+		return;
+	}
+
+	{
+		const TxEnvelope env = CreateTokenTxHelper::BuildTx(info.View(), owner);
+		String symbol;
+		const bool ok = PreflightSubject(env.msg, symbol);
+		Report(ctx, ok && symbol == String("MYFEE"), "the pre-flight reads the symbol a creation would register", symbol);
+	}
+	{
+		// Every other message has nothing to check: the fee the pre-flight protects is the token
+		// creation's alone.
+		const Blockchain::TxMsg msg = NativeTxHelper::TransferFungible({ owner }, owner, 1, 1);
+		String symbol;
+		Report(ctx, !PreflightSubject(msg, symbol), "a transfer has nothing for the pre-flight to check");
+	}
+	{
+		// A call to another method of the same module is not a creation either.
+		Blockchain::TxMsg msg = NativeTxHelper::TransferFungible({ owner }, owner, 1, 1);
+		msg.type = Blockchain::TxTypes::Call;
+		ByteArray args(8, 0);
+		msg.call = Blockchain::TxMsgCall{ (uint32_t)ModuleId::Token, (uint32_t)TokenContract_Methods::BurnFungible,
+			ByteView{ args.data(), args.size() }, {} };
+		String symbol;
+		Report(ctx, !PreflightSubject(msg, symbol), "another token call has nothing for the pre-flight to check");
+	}
+	{
+		// Arguments that are not a token info are refused rather than read as one.
+		Blockchain::TxMsg msg = NativeTxHelper::TransferFungible({ owner }, owner, 1, 1);
+		msg.type = Blockchain::TxTypes::Call;
+		ByteArray args(4, 0x7F);
+		msg.call = Blockchain::TxMsgCall{ (uint32_t)ModuleId::Token, (uint32_t)TokenContract_Methods::CreateToken,
+			ByteView{ args.data(), args.size() }, {} };
+		String symbol;
+		Report(ctx, !PreflightSubject(msg, symbol), "a creation whose arguments cannot be read is refused");
+	}
+}
+
 } // namespace testcases

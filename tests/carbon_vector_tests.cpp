@@ -89,33 +89,6 @@ bool ReadTokenSchemas(TokenSchemas& out, ReadView& reader, Allocator& alloc)
 	return Read(out.seriesMetadata, reader, alloc) && Read(out.rom, reader, alloc) && Read(out.ram, reader, alloc);
 }
 
-// Test-only decoder: TokenInfo has no Read() overload, so decode the wire layout using existing primitives.
-bool ReadTokenInfo(TokenInfo& out, ReadView& reader, Allocator& alloc)
-{
-	intx maxSupply;
-	if( !Read(maxSupply, reader) )
-	{
-		return false;
-	}
-	out.maxSupply = (const intx_pod&)maxSupply;
-	out.flags = (TokenFlags)Read1(reader);
-	out.decimals = Read1(reader);
-	if( !Read(out.owner, reader) || !Read(out.symbol, reader) )
-	{
-		return false;
-	}
-	if( !ReadArray(out.metadata, reader, alloc) )
-	{
-		return false;
-	}
-	if( (out.flags & TokenFlags_NonFungible) != 0 )
-	{
-		return ReadArray(out.tokenSchemas, reader, alloc);
-	}
-	out.tokenSchemas = {};
-	return true;
-}
-
 // Test-only decoder: SeriesInfo has no Read() overload, so decode the wire layout using existing primitives.
 bool ReadSeriesInfo(SeriesInfo& out, ReadView& reader, Allocator& alloc)
 {
@@ -489,7 +462,7 @@ void DecodeTests(TestContext& ctx, const std::vector<Row>& rows)
 				ReadView argsReader(const_cast<uint8_t*>(msg.call.args.bytes), msg.call.args.length);
 				Allocator tokenAlloc;
 				TokenInfo tokenInfo{};
-				const bool tokenOk = ReadTokenInfo(tokenInfo, argsReader, tokenAlloc);
+				const bool tokenOk = Read(tokenInfo, argsReader, tokenAlloc);
 
 				const intx maxSupply = (const intx&)tokenInfo.maxSupply;
 				fieldsOk = tokenOk && tokenInfo.symbol == SmallString("MYNFT") && tokenInfo.decimals == 0 && tokenInfo.flags == TokenFlags_NonFungible && tokenInfo.owner == senderPub && !maxSupply;

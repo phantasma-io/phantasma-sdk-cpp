@@ -160,6 +160,39 @@ inline void Write(const TokenInfo& in, WriteView& w)
 		WriteArray(ByteArray(in.tokenSchemas.bytes, in.tokenSchemas.bytes + in.tokenSchemas.length), w);
 	}
 }
+// Reads a TokenInfo back from the wire, the shape a CreateToken call carries in its arguments.
+// Everything the result points at is cloned into `alloc`, so `alloc` has to outlive it. Answers
+// false on a truncated or malformed image.
+//
+// A caller reads a token this way to see what a message is about before it signs: the pre-flight
+// takes the symbol out of it.
+inline bool Read(TokenInfo& out, ReadView& r, Allocator& alloc)
+{
+	intx maxSupply;
+	if( !Read(maxSupply, r) )
+	{
+		return false;
+	}
+	out.maxSupply = (const intx_pod&)maxSupply;
+	uint8_t flags = 0;
+	if( !Read(flags, r) || !Read(out.decimals, r) || !Read(out.owner, r) || !Read(out.symbol, r) )
+	{
+		return false;
+	}
+	out.flags = (TokenFlags)flags;
+	if( !ReadArray(out.metadata, r, alloc) )
+	{
+		return false;
+	}
+	if( (out.flags & TokenFlags_NonFungible) != 0 )
+	{
+		// Only an NFT-capable token carries schemas; a fungible one ends here.
+		return ReadArray(out.tokenSchemas, r, alloc);
+	}
+	out.tokenSchemas = {};
+	return true;
+}
+
 inline void Write(const TokenSchemas& in, WriteView& w)
 {
 	Write(in.seriesMetadata, w);

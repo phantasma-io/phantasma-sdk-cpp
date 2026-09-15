@@ -10,6 +10,7 @@ int main()
 	testcases::RunTokenMetadataIconTests(ctx);
 	testcases::RunTokenBuilderValidationTests(ctx);
 	testcases::RunTokenSchemasWireTests(ctx);
+	testcases::RunPreflightSubjectTests(ctx);
 	testcases::RunAddressTests(ctx);
 	testcases::RunKeyPairTests(ctx);
 	testcases::RunEncodingRoundtripTests(ctx);

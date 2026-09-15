@@ -253,6 +253,19 @@
      if( !Blockchain::TxMsgSigner::SignAndSerialize(env.msg, { &gasPayerKeys, &ownerKeys }, signedTx, error) )
          return; // the signer list does not match what this message names
 
+ Before a token creation is signed, ask the chain whether the symbol is free:
+
+     #include "Carbon/Preflight.h"
+
+     const PreflightResult check = PreflightTransaction(api, env.msg, gasTokenId);
+     if( check.verdict == PreflightVerdict::Taken )
+         return; // sending this would pay the policy fee and get nothing back
+
+ `Token.CreateToken` is charged its policy fee before the contract looks at the
+  symbol, and that fee is the largest single price in the protocol. The check costs
+  one query and no fee. Every message that is not a token creation answers
+  `NotApplicable`.
+
  Under gas model v2 there are two things to know.
 
  1. Plan before you sign. The chain bills every byte the transaction puts in the

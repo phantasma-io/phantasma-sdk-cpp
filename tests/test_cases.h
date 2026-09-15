@@ -32,6 +32,7 @@ void RunIntXIs8ByteSafeTests(testutil::TestContext& ctx);
 void RunInt256SignGuardByteTests(testutil::TestContext& ctx);
 void RunTokenBuilderValidationTests(testutil::TestContext& ctx);
 void RunTokenSchemasWireTests(testutil::TestContext& ctx);
+void RunPreflightSubjectTests(testutil::TestContext& ctx);
 void RunEncodingRoundtripTests(testutil::TestContext& ctx);
 void RunKeyPairTests(testutil::TestContext& ctx);
 void RunCarbonTxExtraTests(testutil::TestContext& ctx);
