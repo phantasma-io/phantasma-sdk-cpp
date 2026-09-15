@@ -253,6 +253,18 @@
      if( !Blockchain::TxMsgSigner::SignAndSerialize(env.msg, { &gasPayerKeys, &ownerKeys }, signedTx, error) )
          return; // the signer list does not match what this message names
 
+ `ChainFeePlanner` is the same plan against a chain: it holds the gas config,
+  refreshes it when it goes stale, and reads what a burned NFT holds instead of
+  demanding it.
+
+     #include "Carbon/ChainFeePlan.h"
+
+     ChainFeePlanner planner(api);
+     FeePlan plan;
+     std::string error;
+     if( !planner.Plan(env.msg, FeePlanOptions{}, plan, error) )
+         return; // error says what the chain could not answer
+
  Before a token creation is signed, ask the chain whether the symbol is free:
 
      #include "Carbon/Preflight.h"

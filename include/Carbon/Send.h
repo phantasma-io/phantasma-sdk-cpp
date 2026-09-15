@@ -3,6 +3,7 @@
 #error "Configure and include PhantasmaAPI.h first"
 #endif
 
+#include "ChainFeePlan.h"
 #include "FeeInfusions.h"
 #include "FeePlan.h"
 #include "Preflight.h"
