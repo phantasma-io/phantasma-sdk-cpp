@@ -628,4 +628,115 @@ void RunCarbonVectorTests(TestContext& ctx)
 	DecodeTests(ctx, rows);
 }
 
+// The shared builder vectors, rebuilt through this SDK's public builders.
+//
+// `carbon_tx_builder_vectors.tsv` is the same file the TypeScript, C#, Go, Rust and Python SDKs
+// reproduce case by case. Until now C++ only carried the file. That is why a token schema that
+// pointed at freed memory reached a live chain before any test noticed: every case below would have
+// caught it, because the bytes are pinned.
+void RunCarbonTxBuilderVectorTests(testutil::TestContext& ctx)
+{
+	const std::string senderWif = "KwPpBSByydVKqStGHAnZzQofCqhDmD2bfRgc9BmZqM3ZmsdWJw4d";
+	const std::string receiverWif = "KwVG94yjfVg1YKFyRxAGtug93wdRbmLnqqrFV6Yd2CiA9KZDAp4H";
+	const PhantasmaKeys sender = PhantasmaKeys::FromWIF(senderWif.c_str(), (int)senderWif.size());
+	const PhantasmaKeys receiver = PhantasmaKeys::FromWIF(receiverWif.c_str(), (int)receiverWif.size());
+	const Bytes32 senderBytes = ToBytes32(sender.GetPublicKey());
+	const Bytes32 receiverBytes = ToBytes32(receiver.GetPublicKey());
+	const int64_t expiry = 1759711416000ll;
+
+	const auto baseMsg = [&](Blockchain::TxTypes type)
+	{
+		Blockchain::TxMsg msg;
+		msg.type = type;
+		msg.expiry = expiry;
+		msg.maxGas = 10000000;
+		msg.maxData = 1000;
+		msg.gasFrom = senderBytes;
+		msg.payload = SmallString("test-payload");
+		return msg;
+	};
+
+	const auto rows = LoadRows("fixtures/carbon_tx_builder_vectors.tsv");
+	std::map<std::string, std::string> expected;
+	for( const auto& row : rows )
+	{
+		// The fixture's columns are case_id, source and the expected hex; the loader puts the first
+		// two in `kind` and `value` and the hex in `expected`.
+		if( row.kind == "case_id" )
+		{
+			continue;
+		}
+		expected[row.kind] = ToUpper(row.hex);
+	}
+
+	const auto check = [&](const char* caseId, const ByteArray& produced)
+	{
+		const auto it = expected.find(caseId);
+		if( it == expected.end() )
+		{
+			Report(ctx, false, std::string("builder vector ") + caseId, "the fixture has no such case");
+			return;
+		}
+		const std::string got = ToUpper(BytesToHex(produced));
+		Report(ctx, got == it->second, std::string("builder vector ") + caseId, got);
+	};
+
+	{
+		Blockchain::TxMsg msg = baseMsg(Blockchain::TxTypes::TransferFungible);
+		msg.transferFt = Blockchain::TxMsgTransferFungible{ receiverBytes, 1, 100000000 };
+		check("signed_transfer_fungible", Blockchain::TxMsgSigner::SignAndSerialize(msg, sender));
+	}
+	{
+		Blockchain::TxMsg msg = baseMsg(Blockchain::TxTypes::TransferFungible_GasPayer);
+		msg.transferFtGasPayer = Blockchain::TxMsgTransferFungible_GasPayer{ receiverBytes, senderBytes, 1, 100000000 };
+		check("transfer_fungible_gas_payer", Blockchain::SerializeTx(msg));
+	}
+	{
+		Blockchain::TxMsg msg = baseMsg(Blockchain::TxTypes::BurnFungible_GasPayer);
+		msg.burnFungibleGasPayer = Blockchain::TxMsgBurnFungible_GasPayer{};
+		msg.burnFungibleGasPayer.tokenId = 1;
+		msg.burnFungibleGasPayer.from = senderBytes;
+		msg.burnFungibleGasPayer.amount.x() = intx((uint64_t)100000000);
+		check("burn_fungible_gas_payer", Blockchain::SerializeTx(msg));
+	}
+	{
+		Blockchain::TxMsg msg = baseMsg(Blockchain::TxTypes::MintFungible);
+		msg.mintFungible = Blockchain::TxMsgMintFungible{};
+		msg.mintFungible.tokenId = 1;
+		msg.mintFungible.to = receiverBytes;
+		msg.mintFungible.amount.x() = intx((uint64_t)100000000);
+		check("mint_fungible", Blockchain::SerializeTx(msg));
+	}
+	{
+		// The case a live chain caught before any test did: the token schemas ride inside the token
+		// info, and a schema that pointed at freed memory wrote garbage where the field names belong.
+		ByteArray metadata;
+		std::string error;
+		const std::vector<std::pair<std::string, std::string>> metaFields = {
+			{ "name", "My test token!" },
+			{ "icon", SampleIcon() },
+			{ "url", "http://example.com" },
+			{ "description", "My test token description" },
+		};
+		if( !TokenMetadataBuilder::BuildAndSerialize(metaFields, metadata, error) )
+		{
+			Report(ctx, false, "builder vector create_token_nft", error);
+			return;
+		}
+
+		const TokenSchemasOwned schemas = TokenSchemasBuilder::PrepareStandardTokenSchemas();
+		TokenInfoOwned info;
+		if( !TokenInfoBuilder::Build(
+		        "MYNFT", intx((uint64_t)0), true, 0, senderBytes, metadata, CarbonSerialize(schemas.View()), info, error) )
+		{
+			Report(ctx, false, "builder vector create_token_nft", error);
+			return;
+		}
+
+		TxEnvelope env = CreateTokenTxHelper::BuildTx(
+		    info.View(), senderBytes, TxLimits{ (10000ull + 10000000000ull + (10000000000ull >> 4)) * 10000ull, 100000000, expiry });
+		check("create_token_nft", Blockchain::SerializeTx(env.msg));
+	}
+}
+
 } // namespace testcases

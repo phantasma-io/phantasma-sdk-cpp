@@ -184,6 +184,11 @@ std::vector<Row> LoadRows(const std::string& path)
 		{
 			rows.push_back(Row{ cols[0], cols[1], cols[2], cols[3], cols[4] });
 		}
+		else if( cols.size() == 4 )
+		{
+			// The builder fixture's columns: case_id, source, expected_hex, notes.
+			rows.push_back(Row{ cols[0], cols[1], cols[2], cols[3], {} });
+		}
 		else if( cols.size() == 3 )
 		{
 			rows.push_back(Row{ cols[0], cols[1], cols[2], {}, {} });

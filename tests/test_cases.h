@@ -5,6 +5,7 @@
 namespace testcases {
 
 void RunCarbonVectorTests(testutil::TestContext& ctx);
+void RunCarbonTxBuilderVectorTests(testutil::TestContext& ctx);
 void RunApiJsonNumericFlexTests(testutil::TestContext& ctx);
 void RunCallSectionsTests(testutil::TestContext& ctx);
 void RunVmObjectTests(testutil::TestContext& ctx);
