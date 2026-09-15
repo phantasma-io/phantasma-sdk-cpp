@@ -1160,6 +1160,74 @@ struct TxMsgSigner {
 		Write(signedMsg, w);
 		return buffer;
 	}
+
+	// Signs a message with several keys. A _GasPayer message is signed twice: the gas payer first,
+	// then the account whose assets move. A call, a batch, a trade or a script carries as many
+	// witnesses as the caller chose, in the order given, and the gas payer has to be among them
+	// because the chain rejects a transaction its payer did not sign.
+	//
+	// Answers false without touching `out` when a key is missing, when the count is not the one the
+	// message's type fixes, or when a signer is not the account that message names. Each key signs
+	// the same serialized message, so the signatures can be produced anywhere, including on
+	// separate machines.
+	static bool SignAndSerialize(
+	    const Blockchain::TxMsg& msg, const std::vector<const PhantasmaKeys*>& keys, ByteArray& out, std::string& outError)
+	{
+		const auto refuse = [&outError](const char* why)
+		{
+			PHANTASMA_EXCEPTION(why);
+			outError = why;
+			return false;
+		};
+		if( keys.empty() )
+		{
+			return refuse("at least one signer is required");
+		}
+		for( size_t i = 0; i != keys.size(); ++i )
+		{
+			if( keys[i] == nullptr )
+			{
+				return refuse("a signer is null");
+			}
+		}
+
+		uint32_t required = 0;
+		if( RequiredWitnessCount(msg.type, required) )
+		{
+			if( keys.size() != required )
+			{
+				return refuse("this transaction type fixes how many signers it takes");
+			}
+			if( required >= 1 && Bytes32(keys[0]->GetPublicKey()) != msg.gasFrom )
+			{
+				return refuse("the first signer must be the gas payer the message names");
+			}
+			Bytes32 from{};
+			if( required == 2 && (!TryGetGasPayerFrom(msg, from) || Bytes32(keys[1]->GetPublicKey()) != from) )
+			{
+				return refuse("the second signer must be the account the message takes the assets from");
+			}
+		}
+
+		const ByteArray serializedMsg = SerializeTx(msg);
+		PHANTASMA_VECTOR<Witness> witnesses;
+		witnesses.reserve(keys.size());
+		for( size_t i = 0; i != keys.size(); ++i )
+		{
+			const Ed25519Signature sig = Ed25519Signature::Generate(*keys[i], serializedMsg);
+			witnesses.push_back(Witness{ Bytes32(keys[i]->GetPublicKey()), Bytes64(sig.Bytes(), Ed25519Signature::Length) });
+		}
+
+		SignedTxMsg signedMsg;
+		signedMsg.msg = msg;
+		signedMsg.witnesses = Witnesses{ (uint32_t)witnesses.size(), witnesses.data() };
+
+		ByteArray buffer;
+		WriteView w(buffer);
+		Write(signedMsg, w);
+		out = buffer;
+		return true;
+	}
 };
 
 } // namespace phantasma::carbon::Blockchain

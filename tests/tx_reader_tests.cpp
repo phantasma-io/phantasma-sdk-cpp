@@ -500,10 +500,98 @@ void RunSignedEnvelopeTests(TestContext& ctx)
 	}
 }
 
+// Signing a message with more than one key. A _GasPayer message needs two signatures and a call
+// needs as many as the caller chose; the SDK could produce only one until now.
+void RunMultiSignerTests(TestContext& ctx)
+{
+	const std::string gasWif = "KwPpBSByydVKqStGHAnZzQofCqhDmD2bfRgc9BmZqM3ZmsdWJw4d";
+	const std::string assetWif = "KwVG94yjfVg1YKFyRxAGtug93wdRbmLnqqrFV6Yd2CiA9KZDAp4H";
+	const PhantasmaKeys gasPayer = PhantasmaKeys::FromWIF(gasWif.c_str(), (int)gasWif.size());
+	const PhantasmaKeys assetOwner = PhantasmaKeys::FromWIF(assetWif.c_str(), (int)assetWif.size());
+	const Bytes32 gasPub = ToBytes32(gasPayer.GetPublicKey());
+	const Bytes32 assetPub = ToBytes32(assetOwner.GetPublicKey());
+
+	Blockchain::TxMsg msg = BaseMsg(TxTypes::BurnFungible_GasPayer);
+	msg.gasFrom = gasPub;
+	msg.burnFungibleGasPayer = Blockchain::TxMsgBurnFungible_GasPayer{};
+	msg.burnFungibleGasPayer.tokenId = 7;
+	msg.burnFungibleGasPayer.from = assetPub;
+	msg.burnFungibleGasPayer.amount.x() = intx((uint64_t)3);
+
+	{
+		// Both signatures, in the order the type fixes. The envelope has to read back with both
+		// signers named, and each signature has to verify against the message they signed.
+		ByteArray envelope;
+		std::string error;
+		const bool ok = Blockchain::TxMsgSigner::SignAndSerialize(msg, { &gasPayer, &assetOwner }, envelope, error);
+
+		Allocator alloc;
+		Blockchain::SignedTxMsg parsed{};
+		ByteView signedPortion{};
+		const bool read = ok && Blockchain::ParseSignedTx(parsed, signedPortion, View(envelope), alloc);
+		const bool fieldsOk = read && parsed.witnesses.numWitnesses == 2 &&
+		                      parsed.witnesses.witnesses[0].address == gasPub &&
+		                      parsed.witnesses.witnesses[1].address == assetPub &&
+		                      BytesFromView(signedPortion) == Blockchain::SerializeTx(msg);
+		Report(ctx, fieldsOk, "a gas-payer message is signed by both accounts", error);
+
+		if( fieldsOk )
+		{
+			const ByteArray signed_ = BytesFromView(signedPortion);
+			const phantasma::Address gasAddress = gasPayer.GetAddress();
+			const phantasma::Address assetAddress = assetOwner.GetAddress();
+			const bool gasOk = Ed25519Signature((const Byte*)parsed.witnesses.witnesses[0].signature.bytes, Bytes64::length)
+			                       .Verify(signed_.data(), (int)signed_.size(), &gasAddress, 1);
+			const bool assetOk = Ed25519Signature((const Byte*)parsed.witnesses.witnesses[1].signature.bytes, Bytes64::length)
+			                         .Verify(signed_.data(), (int)signed_.size(), &assetAddress, 1);
+			Report(ctx, gasOk && assetOk, "both signatures verify against the signed portion");
+		}
+	}
+	{
+		// The order is not the caller's choice for this type: the gas payer signs first.
+		ByteArray envelope;
+		std::string error;
+		const bool ok = Blockchain::TxMsgSigner::SignAndSerialize(msg, { &assetOwner, &gasPayer }, envelope, error);
+		ExpectRefused(ctx, "a gas-payer message refuses the signers in the wrong order", "gas payer", ok, error);
+	}
+	{
+		// One signature is not enough for a type that fixes two.
+		ByteArray envelope;
+		std::string error;
+		const bool ok = Blockchain::TxMsgSigner::SignAndSerialize(msg, { &gasPayer }, envelope, error);
+		ExpectRefused(ctx, "a gas-payer message refuses a single signer", "fixes how many", ok, error);
+	}
+	{
+		// A call carries a witness array, so it takes as many signers as the caller gives it.
+		ByteArray args(16, 0x5A);
+		Blockchain::TxMsg call = BaseMsg(TxTypes::Call);
+		call.gasFrom = gasPub;
+		call.call = MakeCall(3, 7, args);
+
+		ByteArray envelope;
+		std::string error;
+		const bool ok = Blockchain::TxMsgSigner::SignAndSerialize(call, { &gasPayer, &assetOwner }, envelope, error);
+
+		Allocator alloc;
+		Blockchain::SignedTxMsg parsed{};
+		ByteView signedPortion{};
+		const bool read = ok && Blockchain::ParseSignedTx(parsed, signedPortion, View(envelope), alloc);
+		Report(ctx, read && parsed.witnesses.numWitnesses == 2 && parsed.witnesses.witnesses[0].address == gasPub && parsed.witnesses.witnesses[1].address == assetPub,
+		    "a call takes as many witnesses as it was given", error);
+	}
+	{
+		ByteArray envelope;
+		std::string error;
+		const bool ok = Blockchain::TxMsgSigner::SignAndSerialize(msg, {}, envelope, error);
+		ExpectRefused(ctx, "signing refuses an empty signer list", "at least one signer", ok, error);
+	}
+}
+
 } // namespace
 
 void RunTxReaderTests(testutil::TestContext& ctx)
 {
+	RunMultiSignerTests(ctx);
 	RunRoundTripTests(ctx);
 	RunRefusalTests(ctx);
 	RunFieldOrderTests(ctx);

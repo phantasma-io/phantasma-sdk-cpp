@@ -237,6 +237,15 @@
      env.msg = plan.Apply(env.msg);
      const ByteArray signedTx = SignAndSerialize(env, keys);
 
+ A message that takes more than one signature is signed through the signer. A
+  `_GasPayer` message is signed twice, the gas payer first; a call carries as many
+  witnesses as it was planned for, and the gas payer has to be one of them.
+
+     ByteArray signedTx;
+     std::string error;
+     if( !Blockchain::TxMsgSigner::SignAndSerialize(env.msg, { &gasPayerKeys, &ownerKeys }, signedTx, error) )
+         return; // the signer list does not match what this message names
+
  Under gas model v2 there are two things to know.
 
  1. Plan before you sign. The chain bills every byte the transaction puts in the
