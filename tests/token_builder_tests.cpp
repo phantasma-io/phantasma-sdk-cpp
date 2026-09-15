@@ -127,4 +127,29 @@ void RunTokenBuilderValidationTests(TestContext& ctx)
 	}
 }
 
+// The standard token schemas, as the wire carries them. The bytes are the ones the shared fixture
+// `carbon_tx_builder_vectors.tsv` embeds in its create-token NFT case, and every other SDK in the
+// set produces them, so a token created through this SDK has to carry the same field names and
+// types. The test exists because `TokenSchemasOwned::View()` returned a view into a local copy for
+// one day: the copy died with the call and the first field name serialized as whatever was left in
+// that memory.
+void RunTokenSchemasWireTests(testutil::TestContext& ctx)
+{
+	const std::string expected =
+	    "03000000025F690E046D6F64650603726F6D020007000000025F690E03726F6D02046E616D65160B6465736372"
+	    "697074696F6E1608696D61676555524C1607696E666F55524C1609726F79616C746965730A000000000001";
+
+	const TokenSchemasOwned standard = TokenSchemasBuilder::PrepareStandardTokenSchemas();
+	const ByteArray blob = CarbonSerialize(standard.View());
+	Report(ctx, ToUpper(BytesToHex(blob)) == expected, "the standard token schemas keep their wire form",
+	    ToUpper(BytesToHex(blob)));
+
+	// The same object after a copy. A schema that pointed into the object it was copied from would
+	// answer with the copy's memory here.
+	const TokenSchemasOwned copied = standard;
+	const ByteArray copiedBlob = CarbonSerialize(copied.View());
+	Report(ctx, ToUpper(BytesToHex(copiedBlob)) == expected, "a copied schema set keeps its wire form",
+	    ToUpper(BytesToHex(copiedBlob)));
+}
+
 } // namespace testcases

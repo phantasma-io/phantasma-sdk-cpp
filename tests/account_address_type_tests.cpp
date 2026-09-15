@@ -181,7 +181,8 @@ void RunPagingTests(TestContext& ctx)
 		rpc::PhantasmaError error;
 		int calls = 0;
 		const bool ok = ReadAllPages<String>(
-		    items, [&](const Char*) { ++calls; return Page("a", "same"); }, error);
+		    items, [&](const Char*)
+		    { ++calls; return Page("a", "same"); }, error);
 		Report(ctx, ok && calls == 2 && items.size() == 2 && error.code == 0, "the page walk stops on a cursor it has already seen");
 	}
 	{

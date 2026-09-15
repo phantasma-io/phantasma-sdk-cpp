@@ -48,11 +48,19 @@ struct TokenSchemasOwned {
 		view.ram.fields = ramFields.empty() ? nullptr : ramFields.data();
 	}
 
+	// Returns a schema that points at THIS object's three vectors, so this object has to outlive it.
+	// It must not be built by rebinding a local copy: that copy's vectors die with it and the caller
+	// is left reading freed memory.
 	TokenSchemas View() const
 	{
-		TokenSchemasOwned copy = *this;
-		copy.Rebind();
-		return copy.view;
+		TokenSchemas out = view;
+		out.seriesMetadata.numFields = (uint32_t)seriesFields.size();
+		out.seriesMetadata.fields = seriesFields.empty() ? nullptr : seriesFields.data();
+		out.rom.numFields = (uint32_t)romFields.size();
+		out.rom.fields = romFields.empty() ? nullptr : romFields.data();
+		out.ram.numFields = (uint32_t)ramFields.size();
+		out.ram.fields = ramFields.empty() ? nullptr : ramFields.data();
+		return out;
 	}
 };
 
