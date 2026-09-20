@@ -20,6 +20,7 @@ int main()
 	testcases::RunScriptBuilderTransactionTests(ctx);
 	testcases::RunCarbonTxExtraTests(ctx);
 	testcases::RunTxReaderTests(ctx);
+	testcases::RunScriptTransactionExpiryTests(ctx);
 	testcases::RunAccountAddressTypeTests(ctx);
 	testcases::RunGasConfigFeeTests(ctx);
 	testcases::RunFeePlanTests(ctx);

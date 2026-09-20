@@ -3,6 +3,7 @@
 #include "../Domain/Event.h"
 #include "../Blockchain/Transaction.h"
 #include "../Carbon/DataBlockchain.h"
+#include "../Carbon/Tx.h"
 
 namespace phantasma {
 
@@ -116,6 +117,16 @@ inline String SignAndSendTransactionInternal(
 	return rpcHash;
 }
 
+// Returns the expiration a script transaction gets when the caller names none.
+//
+// It is carbon::DefaultExpiryMs from now, the same lifetime a Carbon transaction gets: the chain admits
+// both kinds of transaction with the same check against its own expiry window. This transaction
+// carries its expiration in seconds, while the Carbon default counts in milliseconds.
+inline Timestamp DefaultScriptExpiration()
+{
+	return Timestamp((Timestamp::ValueType)(carbon::DefaultExpiry() / 1000));
+}
+
 // Convenience helper for the script/VM transaction flow.
 inline String SignAndSendTransaction(
     rpc::PhantasmaAPI& api,
@@ -124,9 +135,10 @@ inline String SignAndSendTransaction(
     const Char* chain,
     const ByteArray& script,
     const ByteArray& payload,
-    rpc::PhantasmaError* out_error = nullptr)
+    rpc::PhantasmaError* out_error = nullptr,
+    Timestamp expiration = Timestamp())
 {
-	Transaction tx(nexus, chain, script, Timestamp::Now() + Timespan::FromMinutes(1), payload);
+	Transaction tx(nexus, chain, script, expiration.Value ? expiration : DefaultScriptExpiration(), payload);
 	return SignAndSendTransactionInternal(api, tx, keys, out_error);
 }
 
@@ -138,9 +150,10 @@ inline String SignAndSendTransaction(
     const Char* chain,
     const ByteArray& script,
     const String& payload,
-    rpc::PhantasmaError* out_error = nullptr)
+    rpc::PhantasmaError* out_error = nullptr,
+    Timestamp expiration = Timestamp())
 {
-	Transaction tx(nexus, chain, script, Timestamp::Now() + Timespan::FromMinutes(1), payload);
+	Transaction tx(nexus, chain, script, expiration.Value ? expiration : DefaultScriptExpiration(), payload);
 	return SignAndSendTransactionInternal(api, tx, keys, out_error);
 }
 

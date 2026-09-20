@@ -1,4 +1,8 @@
 #define PHANTASMA_IMPLEMENTATION
+// This file carries the SDK implementation for the whole test binary, so the HTTP client the
+// high-level API methods are compiled against is configured here.
+#include "stub_http_client.h"
+
 #include "test_cases.h"
 
 namespace testcases {
