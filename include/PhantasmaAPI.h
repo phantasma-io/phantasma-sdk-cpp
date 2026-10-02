@@ -1399,8 +1399,8 @@ class PhantasmaAPI
 	// fee bill with recommended maxGas/maxData ceilings (gas-model-v2 Tier-2 estimate). Signatures
 	// inside the envelope may be zero-filled dummies of the correct length - the simulation skips
 	// signature checks, and dummies preserve the exact envelope byte length the bill depends on.
-	// Until the estimate service is launched this returns a standard RPC error; use
-	// Carbon::EstimateNativeFee with GetGasConfig as the fallback.
+	// A node with the estimate service switched off answers with a standard RPC error.
+	// carbon::ChainFeePlanner plans a fee without that service.
 	EstimateTransactionResult EstimateTransaction(const Char* txData, PhantasmaError* out_error = nullptr);
 	// Returns info about the nexus.
 	// Warning: this Phantasma RPC method is currently stubbed and returns a default nexus object.
