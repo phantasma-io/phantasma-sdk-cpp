@@ -1143,8 +1143,20 @@ inline bool ParseSignedTx(SignedTxMsg& out, ByteView& outSignedPortion, const By
 }
 
 struct TxMsgSigner {
+	// A zero gas offer marks a message that was built and never planned. Both signing calls refuse it
+	// before anything is signed, as the other SDKs do.
+	static constexpr const char* NoGasOffer = "Transaction has no gas offer: plan its fees or set maxGas before signing";
+
+	// Signs a message with one key. Answers an empty envelope when the message has no gas offer and
+	// exceptions are disabled.
 	static ByteArray SignAndSerialize(const TxMsg& msg, const PhantasmaKeys& keys)
 	{
+		if( msg.maxGas == 0 )
+		{
+			PHANTASMA_EXCEPTION(NoGasOffer);
+			return ByteArray();
+		}
+
 		const ByteArray serializedMsg = SerializeTx(msg);
 		const Ed25519Signature sig = Ed25519Signature::Generate(keys, serializedMsg);
 		Bytes64 sigBytes(sig.Bytes(), Ed25519Signature::Length);
@@ -1166,10 +1178,10 @@ struct TxMsgSigner {
 	// witnesses as the caller chose, in the order given, and the gas payer has to be among them
 	// because the chain rejects a transaction its payer did not sign.
 	//
-	// Answers false without touching `out` when a key is missing, when the count is not the one the
-	// message's type fixes, or when a signer is not the account that message names. Each key signs
-	// the same serialized message, so the signatures can be produced anywhere, including on
-	// separate machines.
+	// Answers false without touching `out` when the message has no gas offer, when a key is missing,
+	// when the count is not the one the message's type fixes, or when a signer is not the account
+	// that message names. Each key signs the same serialized message, so the signatures can be
+	// produced anywhere, including on separate machines.
 	static bool SignAndSerialize(
 	    const Blockchain::TxMsg& msg, const std::vector<const PhantasmaKeys*>& keys, ByteArray& out, std::string& outError)
 	{
@@ -1179,6 +1191,10 @@ struct TxMsgSigner {
 			outError = why;
 			return false;
 		};
+		if( msg.maxGas == 0 )
+		{
+			return refuse(NoGasOffer);
+		}
 		if( keys.empty() )
 		{
 			return refuse("at least one signer is required");

@@ -585,6 +585,28 @@ void RunMultiSignerTests(TestContext& ctx)
 		const bool ok = Blockchain::TxMsgSigner::SignAndSerialize(msg, {}, envelope, error);
 		ExpectRefused(ctx, "signing refuses an empty signer list", "at least one signer", ok, error);
 	}
+	{
+		// A message whose fees were never planned carries a zero gas offer. Both signing calls refuse
+		// it. The one-key call has no error string: it throws when exceptions are enabled and answers
+		// an empty envelope when they are not, as in this test binary.
+		Blockchain::TxMsg unplanned = msg;
+		unplanned.maxGas = 0;
+		ByteArray envelope;
+		std::string error;
+		const bool ok = Blockchain::TxMsgSigner::SignAndSerialize(unplanned, { &gasPayer, &assetOwner }, envelope, error);
+		ExpectRefused(ctx, "signing refuses a message with no gas offer", "no gas offer", ok, error);
+
+		bool refused = false;
+		PHANTASMA_TRY
+		{
+			refused = Blockchain::TxMsgSigner::SignAndSerialize(unplanned, gasPayer).empty();
+		}
+		PHANTASMA_CATCH_ALL()
+		{
+			refused = true;
+		}
+		Report(ctx, refused, "signing with one key refuses a message with no gas offer");
+	}
 }
 
 // The native builders. Each one must produce the message type the chain prices, with the accounts

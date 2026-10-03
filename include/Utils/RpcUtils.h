@@ -171,13 +171,28 @@ inline String SignAndSendTransaction(
 }
 
 // Convenience helper for Carbon TxMsg flow (mirrors C# SignAndSendCarbonTransaction).
+//
+// Sends nothing when the signer refuses the message, for example one with no gas offer. Without
+// exceptions the signer's reason reaches the caller through `out_error`. The signing call that takes
+// a list of keys is used because it reports that reason. For a message one key may sign, it writes
+// the same envelope as the one-key call.
 inline String SignAndSendCarbonTransaction(
     rpc::PhantasmaAPI& api,
     const phantasma::carbon::Blockchain::TxMsg& txMsg,
     const PhantasmaKeys& keys,
     rpc::PhantasmaError* out_error = nullptr)
 {
-	const ByteArray signedBytes = phantasma::carbon::Blockchain::TxMsgSigner::SignAndSerialize(txMsg, keys);
+	ByteArray signedBytes;
+	std::string refusal;
+	if( !phantasma::carbon::Blockchain::TxMsgSigner::SignAndSerialize(txMsg, { &keys }, signedBytes, refusal) )
+	{
+		if( out_error )
+		{
+			out_error->code = rpc::PhantasmaError::Refused;
+			out_error->message = FromUTF8(refusal.c_str());
+		}
+		return String();
+	}
 	const String rawTx = Base16::Encode(signedBytes);
 	return api.SendCarbonTransaction(rawTx.c_str(), out_error);
 }

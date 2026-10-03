@@ -1,10 +1,13 @@
 // The one-step send asks the chain whether a token creation's symbol is taken before it signs
 // anything. It refuses when the symbol is taken and when the node established nothing. These tests
-// answer for the node and check what SendTransaction does with each answer.
+// answer for the node and check what SendTransaction does with each answer, and what the one-step
+// helper of RpcUtils does with a message its signer refuses.
 
 #include "stub_http_client.h"
 
 #include "test_cases.h"
+
+#include "../include/Utils/RpcUtils.h"
 
 namespace testcases {
 using namespace testutil;
@@ -143,6 +146,31 @@ void RunSendTransactionTests(TestContext& ctx)
 		std::string sendError;
 		const bool sent = send(lookups, options, log, sendError);
 		Report(ctx, sent && log.lookedUpIds == std::vector<uint64_t>{ 7 }, "the control lookup asks for the token the caller names", sendError);
+	}
+	{
+		// The helper signs and sends in one call. A message the signer refuses, here one with no gas
+		// offer, is not sent, and the signer's reason reaches the caller. With exceptions the call
+		// throws instead.
+		Blockchain::TxMsg unplanned = msg;
+		unplanned.maxGas = 0;
+		NodeLog log;
+		StubNode node;
+		node.answer = [&](const std::string& request)
+		{ return AnswerNode(request, TokenLookups{}, log); };
+		rpc::PhantasmaAPI api(node);
+		rpc::PhantasmaError error;
+		bool refused = false;
+		PHANTASMA_TRY
+		{
+			const String hash = SignAndSendCarbonTransaction(api, unplanned, keys, &error);
+			refused = hash.empty() && error.code == rpc::PhantasmaError::Refused &&
+			          std::string(error.message.c_str()).find("no gas offer") != std::string::npos;
+		}
+		PHANTASMA_CATCH_ALL()
+		{
+			refused = true;
+		}
+		Report(ctx, refused && log.broadcasts == 0, "the one-step helper sends nothing its signer refuses");
 	}
 }
 
