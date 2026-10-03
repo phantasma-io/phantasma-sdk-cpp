@@ -613,7 +613,7 @@ static void RunCreateToken(const Config& cfg)
 	std::string result;
 	if (WaitForTx(api, hash.c_str(), result))
 	{
-		const uint32_t carbonId = CreateTokenTxHelper::ParseResult(result);
+		const uint64_t carbonId = CreateTokenTxHelper::ParseResult(result);
 		std::cout << "Deployed carbon token ID: " << carbonId << std::endl;
 	}
 }

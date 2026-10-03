@@ -113,6 +113,15 @@ void RunCarbonTxExtraTests(TestContext& ctx)
 		    "ExpiryWithin takes the chain window less the margin");
 	}
 
+	// Token.CreateToken answers the new token id as a u64; a 4-byte read would keep only its low half.
+	{
+		ByteArray payload;
+		WriteView w(payload);
+		Write8u(0x0000000500000007ull, w);
+		Report(ctx, CreateTokenTxHelper::ParseResult(ToUpper(BytesToHex(payload))) == 0x0000000500000007ull,
+		    "CreateTokenTxHelper ParseResult reads the whole u64 token id");
+	}
+
 	ExpectNoThrow(ctx, "MintPhantasmaNonFungibleTxHelper ParseResult preserves exact 32-byte Phantasma ids", [&]()
 	    {
 		PhantasmaNftMintResult low{};

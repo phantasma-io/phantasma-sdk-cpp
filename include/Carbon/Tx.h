@@ -364,11 +364,12 @@ struct CreateTokenTxHelper {
 		return env;
 	}
 
-	static uint32_t ParseResult(const std::string& resultHex)
+	// The chain answers Token.CreateToken with the new token id as a u64.
+	static uint64_t ParseResult(const std::string& resultHex)
 	{
 		ByteArray bytes = Base16::Decode(resultHex.c_str(), (int)resultHex.size());
 		ReadView r(bytes.empty() ? nullptr : &bytes.front(), bytes.size());
-		return (uint32_t)Read4u(r);
+		return Read8u(r);
 	}
 };
 
