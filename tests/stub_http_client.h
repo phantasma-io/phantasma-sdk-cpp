@@ -7,10 +7,13 @@
 // configured, so the tests configure one here the way the curl and cpprest adaptors do: a client
 // type, an HttpPost for it, and PHANTASMA_HTTPCLIENT naming it.
 //
-// The client answers from StubNode::Answer, which is defined in the test that uses it. Answering
-// needs the SDK types, and this header is read before they exist; a member defined elsewhere is
-// looked up when HttpPost is instantiated, which happens after them.
+// The client answers from StubNode::Answer, which script_transaction_expiry_tests.cpp defines: it
+// answers a script broadcast. Answering needs the SDK types, and this header is read before they
+// exist; a member defined elsewhere is looked up when HttpPost is instantiated, which happens after
+// them. A test that needs other answers sets StubNode::answer.
 
+#include <cstring>
+#include <functional>
 #include <string>
 #include <sstream>
 
@@ -33,9 +36,26 @@ struct PhantasmaError;
 struct StubNode {
 	// The hex of the transaction the last broadcast carried.
 	std::string sentTx;
+	// Answers every request when it is set. A test that needs other answers than a script broadcast
+	// sets it.
+	std::function<std::string(const std::string& request)> answer;
 
 	std::string Answer(const std::string& request);
 };
+
+// The text between two markers of the JSON-RPC envelope. The stub reads the request that way
+// because the tests carry no JSON parser of their own.
+inline std::string Between(const std::string& text, const char* open, const char* close)
+{
+	const size_t start = text.find(open);
+	if( start == std::string::npos )
+		return {};
+	const size_t from = start + strlen(open);
+	const size_t end = text.find(close, from);
+	if( end == std::string::npos )
+		return {};
+	return text.substr(from, end - from);
+}
 
 template<class Client>
 static PHANTASMA_STRING HttpPost(Client& client, const PHANTASMA_CHAR*, const PHANTASMA_STRINGBUILDER& data, rpc::PhantasmaError*)

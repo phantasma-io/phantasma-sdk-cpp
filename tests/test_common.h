@@ -138,5 +138,8 @@ Bytes32 ToBytes32(const ByteArray& bytes);
 VmNamedVariableSchema MakeSchema(const char* name, VmType type, const VmStructSchema* structSchema = nullptr);
 VmStructSchema MakeStructSchema(VmNamedVariableSchema* fields, uint32_t count, bool allowDynamicExtras = false);
 ByteArray BuildConsensusSingleVoteScript();
+// The gas configuration the fee tests compute their expected bills from. The gas token is id 2 and
+// the data token is id 1.
+Blockchain::GasConfig PlanningConfig();
 
 } // namespace testutil

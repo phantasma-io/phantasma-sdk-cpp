@@ -10,22 +10,12 @@
 
 namespace phantasma {
 
-// The text between two markers of the JSON-RPC envelope. The stub reads the request that way
-// because the tests carry no JSON parser of their own.
-static std::string Between(const std::string& text, const char* open, const char* close)
-{
-	const size_t start = text.find(open);
-	if( start == std::string::npos )
-		return {};
-	const size_t from = start + strlen(open);
-	const size_t end = text.find(close, from);
-	if( end == std::string::npos )
-		return {};
-	return text.substr(from, end - from);
-}
-
 std::string StubNode::Answer(const std::string& request)
 {
+	if( answer )
+	{
+		return answer(request);
+	}
 	sentTx = Between(request, "\"params\": [\"", "\"]");
 
 	// The reader keeps a reference to the array, so the array has to outlive it.

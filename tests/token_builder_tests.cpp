@@ -152,9 +152,9 @@ void RunTokenSchemasWireTests(testutil::TestContext& ctx)
 	    ToUpper(BytesToHex(copiedBlob)));
 }
 
-// What the pre-flight makes of a message, before any chain is asked. The chain-facing half needs an
-// HTTP client, which the test binary has none of; what is checked here is the part that decides
-// whether there is anything to ask about, and the symbol it would ask about.
+// What the pre-flight makes of a message, before any chain is asked: whether there is anything to
+// ask about, and the symbol it would ask about. The chain-facing half is checked against a stub node
+// in send_transaction_tests.cpp.
 void RunPreflightSubjectTests(testutil::TestContext& ctx)
 {
 	const std::string wif = "KwPpBSByydVKqStGHAnZzQofCqhDmD2bfRgc9BmZqM3ZmsdWJw4d";

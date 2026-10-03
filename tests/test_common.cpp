@@ -247,4 +247,29 @@ ByteArray BuildConsensusSingleVoteScript()
 	    .EndScript();
 }
 
+Blockchain::GasConfig PlanningConfig()
+{
+	Blockchain::GasConfig c{};
+	c.version = 1;
+	c.maxNameLength = 32;
+	c.maxTokenSymbolLength = 10;
+	c.feeShift = 0;
+	c.maxStructureSize = 65536;
+	c.feeMultiplier = 10000;
+	c.gasTokenId = 2;
+	c.dataTokenId = 1;
+	c.minimumGasOffer = 10;
+	c.dataEscrowPerRow = 200000;
+	c.minimumGasBill = 10000000;
+	c.gasFeeTransfer = 10;
+	c.gasFeeQuery = 2;
+	c.gasFeePerByte = 250000;
+	c.policyFeeCreateTokenBase = 100000000000000ull;
+	c.policyFeeCreateTokenSymbol = 100000000000000ull;
+	c.policyFeeCreateTokenSeries = 25000000000000ull;
+	c.policyFeeRegisterName = 100000000000000000ull;
+	c.legacyDataEscrowPerRow = 2;
+	return c;
+}
+
 } // namespace testutil

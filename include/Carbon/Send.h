@@ -26,7 +26,7 @@ struct SendOptions {
 	// costs one query and no fee, and it protects the largest single price in the protocol.
 	bool preflight = true;
 	// A token id the chain is known to hold, used by that check to tell a free symbol from a node
-	// that answers nothing. The gas token's id is the obvious one.
+	// that answers nothing. Zero means the gas token of `config`, which every chain holds.
 	uint64_t controlTokenId = 0;
 	// Read what every burned NFT holds at its own address, which the planner demands and has no
 	// costlier bound for. Leave it on unless the caller has filled `fees.infusions` itself.
@@ -50,10 +50,19 @@ inline bool SendTransaction(
 {
 	if( options.preflight )
 	{
-		const PreflightResult check = PreflightTransaction(api, msg, options.controlTokenId);
+		const uint64_t controlTokenId = options.controlTokenId != 0 ? options.controlTokenId : config.gasTokenId;
+		const PreflightResult check = PreflightTransaction(api, msg, controlTokenId);
 		if( check.verdict == PreflightVerdict::Taken )
 		{
 			outError = std::string("token symbol ") + check.subject.c_str() + " is already taken";
+			PHANTASMA_EXCEPTION(outError.c_str());
+			return false;
+		}
+		// The policy fee is spent before the contract looks at the symbol, so a lookup that
+		// established nothing is refused as well, as the other SDKs do.
+		if( check.verdict == PreflightVerdict::Unknown )
+		{
+			outError = std::string("could not establish whether token symbol ") + check.subject.c_str() + " is taken: " + check.reason.c_str();
 			PHANTASMA_EXCEPTION(outError.c_str());
 			return false;
 		}
