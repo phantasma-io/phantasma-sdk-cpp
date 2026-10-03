@@ -57,6 +57,19 @@ void RunApiJsonNumericFlexTests(TestContext& ctx)
 		const bool staleStringOk = rpc::PhantasmaJsonAPI::ParseGetBlockHeightResponse(json::Parse(staleStringId), staleStringHeight, &staleStringErr);
 		Report(ctx, !staleStringOk && staleStringErr.code == rpc::PhantasmaError::InvalidRpcResponse, "API response parser rejects stale string JSON-RPC id");
 
+		// invokeRawScript answers a script that ran with "error": "" inside the result.
+		const JSONDocument scriptRan = R"({"id":"1","result":{"events":[],"result":"03070E","error":"","results":["03070E"],"oracles":[]}})";
+		rpc::PhantasmaError scriptRanErr{};
+		rpc::Script scriptRanOut;
+		const bool scriptRanOk = rpc::PhantasmaJsonAPI::ParseInvokeRawScriptResponse(json::Parse(scriptRan), scriptRanOut, &scriptRanErr);
+		Report(ctx, scriptRanOk && scriptRanErr.code == 0 && scriptRanOut.result == "03070E", "API response parser accepts an empty script error");
+
+		const JSONDocument scriptFailed = R"({"id":"1","result":{"events":[],"result":"","error":"VM fault","results":[],"oracles":[]}})";
+		rpc::PhantasmaError scriptFailedErr{};
+		rpc::Script scriptFailedOut;
+		const bool scriptFailedOk = rpc::PhantasmaJsonAPI::ParseInvokeRawScriptResponse(json::Parse(scriptFailed), scriptFailedOut, &scriptFailedErr);
+		Report(ctx, !scriptFailedOk && scriptFailedErr.code == rpc::PhantasmaError::RpcMessage && scriptFailedErr.message == "VM fault", "API response parser reports a script error message");
+
 		const JSONDocument staleNumericId = R"({"id":0,"result":"321"})";
 		rpc::PhantasmaError staleNumericErr{};
 		Int32 staleNumericHeight = 0;

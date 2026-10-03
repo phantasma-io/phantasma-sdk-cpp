@@ -2815,6 +2815,7 @@ PHANTASMA_FUNCTION JSONValue PhantasmaJsonAPI::CheckResponse(JSONValue response,
 		const JSONValue& error = json::LookupValue(result, PHANTASMA_LITERAL("error"), jsonErr);
 		int code = PhantasmaError::RpcMessage;
 		String msg;
+		bool failed = true;
 		if( json::IsObject(error, jsonErr) )
 		{
 			msg = json::LookupString(error, PHANTASMA_LITERAL("message"), jsonErr);
@@ -2823,10 +2824,15 @@ PHANTASMA_FUNCTION JSONValue PhantasmaJsonAPI::CheckResponse(JSONValue response,
 		else
 		{
 			msg = json::LookupString(result, PHANTASMA_LITERAL("error"), jsonErr);
+			// A script result carries "error": "" when the script ran; only a message is a failure.
+			failed = !msg.empty();
 		}
-		PHANTASMA_EXCEPTION_MESSAGE("Server returned error", msg);
-		out_error.message = msg;
-		out_error.code = code;
+		if( failed )
+		{
+			PHANTASMA_EXCEPTION_MESSAGE("Server returned error", msg);
+			out_error.message = msg;
+			out_error.code = code;
+		}
 	}
 
 	return result;
