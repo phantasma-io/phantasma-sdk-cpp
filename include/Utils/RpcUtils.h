@@ -102,6 +102,19 @@ inline String SignAndSendTransactionInternal(
     const PhantasmaKeys& keys,
     rpc::PhantasmaError* out_error)
 {
+	// Without exceptions, ScriptBuilder answers an empty script for a script it refused, a jump to an
+	// unknown label for example. The chain would bill such a transaction and run nothing.
+	if( tx.Script().empty() )
+	{
+		PHANTASMA_EXCEPTION("Transaction has no script");
+		if( out_error )
+		{
+			out_error->code = rpc::PhantasmaError::Refused;
+			out_error->message = PHANTASMA_LITERAL("Transaction has no script");
+		}
+		return String();
+	}
+
 	tx.Sign(keys);
 	const String expectedHash = tx.GetHash().ToString();
 	const String rawTx = Base16::Encode(tx.ToByteArray(true));

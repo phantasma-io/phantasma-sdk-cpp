@@ -64,6 +64,24 @@ void RunScriptTransactionExpiryTests(TestContext& ctx)
 	SignAndSendTransaction(api, keys, "simnet", "main", script, ByteArray{}, nullptr, Timestamp(1900000000));
 	Report(ctx, BroadcastExpiration(node.sentTx).Value == 1900000000u,
 	    "script transaction keeps the expiration the caller passes");
+
+	// An empty script is what the builder answers, without exceptions, for a script it refused. The
+	// call sends nothing and says why; with exceptions it throws instead.
+	{
+		node.sentTx.clear();
+		rpc::PhantasmaError error;
+		bool refused = false;
+		PHANTASMA_TRY
+		{
+			const String hash = SignAndSendTransaction(api, keys, "simnet", "main", ByteArray{}, ByteArray{}, &error);
+			refused = hash.empty() && error.code == rpc::PhantasmaError::Refused;
+		}
+		PHANTASMA_CATCH_ALL()
+		{
+			refused = true;
+		}
+		Report(ctx, refused && node.sentTx.empty(), "script transaction with an empty script is refused and not sent");
+	}
 }
 
 } // namespace testcases

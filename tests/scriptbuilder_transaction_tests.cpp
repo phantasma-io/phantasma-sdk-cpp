@@ -12,6 +12,30 @@ void RunScriptBuilderTransactionTests(TestContext& ctx)
 	const std::string knownTxHex =
 	    "07746573746E6574046D61696E03010203D2029649077061796C6F61640101404C033859A20A4FC2E469B3741FB05ACEDFEC24BFE92E07633680488665D79F916773FF40D0E81C4468E1C1487E6E1E6EEFDA5C5D7C53C15C4FB349C2349A1802";
 
+	// A jump resolves to the offset after its label's NOP. A jump to a label the script never defines
+	// is refused: the builder throws when exceptions are enabled and answers an empty script when they
+	// are not, as in this test binary.
+	{
+		ScriptBuilder sb;
+		sb.EmitJump(Opcode::JMP, "end").Emit(Opcode::NOP).EmitLabel("end");
+		const ByteArray jumpScript = sb.EndScript();
+		Report(ctx, jumpScript.size() > 2 && jumpScript[1] == 5 && jumpScript[2] == 0, "ScriptBuilder resolves a jump to its label");
+	}
+	{
+		bool refused = false;
+		PHANTASMA_TRY
+		{
+			ScriptBuilder sb;
+			sb.EmitJump(Opcode::JMP, "nowhere");
+			refused = sb.EndScript().empty();
+		}
+		PHANTASMA_CATCH_ALL()
+		{
+			refused = true;
+		}
+		Report(ctx, refused, "ScriptBuilder refuses a jump to an unknown label");
+	}
+
 	const ByteArray script = BuildConsensusSingleVoteScript();
 	const std::string scriptHex = ToUpper(BytesToHex(script));
 	const std::string expectedScript = ToUpper(expectedScriptHex);

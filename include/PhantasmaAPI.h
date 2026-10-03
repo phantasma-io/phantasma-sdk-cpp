@@ -1086,6 +1086,8 @@ struct PhantasmaError {
 	const static int HttpError = -2;
 	const static int InvalidRpcResponse = -3;
 	const static int RpcMessage = -4;
+	// The SDK refused the request and sent nothing. `message` says why.
+	const static int Refused = -5;
 };
 inline void OnHttpError(PhantasmaError& err, const Char* msg)
 {

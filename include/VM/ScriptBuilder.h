@@ -450,7 +450,16 @@ class ScriptBuilder
 		for( const auto& entry : _jumpLocations )
 		{
 			const auto& label = entry.second;
-			uint16_t labelOffset = (uint16_t)_labelLocations[label];
+			// A jump to a label the script never defines would land at offset 0 and run the script
+			// again from its start. Without exceptions the builder answers an empty script, which
+			// the caller can check.
+			const auto found = _labelLocations.find(label);
+			if( found == _labelLocations.end() )
+			{
+				PHANTASMA_EXCEPTION("ScriptBuilder: jump to an unknown label");
+				return ByteArray();
+			}
+			uint16_t labelOffset = (uint16_t)found->second;
 			auto targetOffset = entry.first;
 
 			script[targetOffset + 0] = labelOffset & 0xFF;
