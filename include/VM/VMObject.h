@@ -7,6 +7,7 @@
 #include "../Utils/TextUtils.h"
 #include "../Cryptography/Address.h"
 #include "../Cryptography/Hash.h"
+#include "../Carbon/DataCommon.h"
 #if __cplusplus >= 201703L
 #include <variant>
 #endif
