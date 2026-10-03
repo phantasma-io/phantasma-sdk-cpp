@@ -607,6 +607,52 @@ void RunMultiSignerTests(TestContext& ctx)
 		}
 		Report(ctx, refused, "signing with one key refuses a message with no gas offer");
 	}
+	{
+		// The chain reads a native transfer amount as a signed 64-bit value, so 2^63 fails on chain
+		// and the int64 maximum does not. Both transfer types and both signing calls refuse the first.
+		const uint64_t int64Max = ((uint64_t)1 << 63) - 1;
+		const auto plain = [&](uint64_t amount)
+		{
+			Blockchain::TxMsg transfer = BaseMsg(TxTypes::TransferFungible);
+			transfer.gasFrom = gasPub;
+			transfer.transferFt = Blockchain::TxMsgTransferFungible{ assetPub, 1, amount };
+			return transfer;
+		};
+		const auto withGasPayer = [&](uint64_t amount)
+		{
+			Blockchain::TxMsg transfer = BaseMsg(TxTypes::TransferFungible_GasPayer);
+			transfer.gasFrom = gasPub;
+			transfer.transferFtGasPayer = Blockchain::TxMsgTransferFungible_GasPayer{ Address(9), assetPub, 1, amount };
+			return transfer;
+		};
+
+		ByteArray envelope;
+		std::string error;
+		bool ok = Blockchain::TxMsgSigner::SignAndSerialize(plain(int64Max + 1), { &gasPayer }, envelope, error);
+		ExpectRefused(ctx, "signing refuses a native transfer of 2^63", "int64 maximum", ok, error);
+		error.clear();
+		ok = Blockchain::TxMsgSigner::SignAndSerialize(withGasPayer(int64Max + 1), { &gasPayer, &assetOwner }, envelope, error);
+		ExpectRefused(ctx, "signing refuses a gas-payer transfer of 2^63", "int64 maximum", ok, error);
+
+		bool refused = false;
+		PHANTASMA_TRY
+		{
+			refused = Blockchain::TxMsgSigner::SignAndSerialize(plain(int64Max + 1), gasPayer).empty();
+		}
+		PHANTASMA_CATCH_ALL()
+		{
+			refused = true;
+		}
+		Report(ctx, refused, "signing with one key refuses a native transfer of 2^63");
+
+		error.clear();
+		ok = Blockchain::TxMsgSigner::SignAndSerialize(plain(int64Max), { &gasPayer }, envelope, error);
+		Report(ctx, ok, "signing takes a native transfer of the int64 maximum", error);
+		ok = Blockchain::TxMsgSigner::SignAndSerialize(withGasPayer(int64Max), { &gasPayer, &assetOwner }, envelope, error);
+		Report(ctx, ok, "signing takes a gas-payer transfer of the int64 maximum", error);
+		Report(ctx, !Blockchain::TxMsgSigner::SignAndSerialize(plain(int64Max), gasPayer).empty(),
+		    "signing with one key takes a native transfer of the int64 maximum");
+	}
 }
 
 // The native builders. Each one must produce the message type the chain prices, with the accounts

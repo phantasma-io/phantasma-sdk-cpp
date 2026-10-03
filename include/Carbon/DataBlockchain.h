@@ -1146,14 +1146,38 @@ struct TxMsgSigner {
 	// A zero gas offer marks a message that was built and never planned. Both signing calls refuse it
 	// before anything is signed, as the other SDKs do.
 	static constexpr const char* NoGasOffer = "Transaction has no gas offer: plan its fees or set maxGas before signing";
+	static constexpr const char* AmountAboveInt64 = "Transfer amount is above the int64 maximum the chain accepts in a native transfer";
 
-	// Signs a message with one key. Answers an empty envelope when the message has no gas offer and
-	// exceptions are disabled.
+	// Returns true if the message is a native fungible transfer whose amount the chain refuses. The
+	// message carries the amount as a u64, and the chain reads it as a signed 64-bit value, so it
+	// refuses 2^63 or more for every fungible token, big-fungible ones included. A larger amount needs
+	// a module call or a script transfer.
+	static bool HasAmountAboveInt64(const TxMsg& msg)
+	{
+		const uint64_t firstRefused = (uint64_t)1 << 63;
+		if( msg.type == TxTypes::TransferFungible )
+		{
+			return msg.transferFt.amount >= firstRefused;
+		}
+		if( msg.type == TxTypes::TransferFungible_GasPayer )
+		{
+			return msg.transferFtGasPayer.amount >= firstRefused;
+		}
+		return false;
+	}
+
+	// Signs a message with one key. Answers an empty envelope when exceptions are disabled and the
+	// message has no gas offer or carries a transfer amount the chain refuses.
 	static ByteArray SignAndSerialize(const TxMsg& msg, const PhantasmaKeys& keys)
 	{
 		if( msg.maxGas == 0 )
 		{
 			PHANTASMA_EXCEPTION(NoGasOffer);
+			return ByteArray();
+		}
+		if( HasAmountAboveInt64(msg) )
+		{
+			PHANTASMA_EXCEPTION(AmountAboveInt64);
 			return ByteArray();
 		}
 
@@ -1178,10 +1202,10 @@ struct TxMsgSigner {
 	// witnesses as the caller chose, in the order given, and the gas payer has to be among them
 	// because the chain rejects a transaction its payer did not sign.
 	//
-	// Answers false without touching `out` when the message has no gas offer, when a key is missing,
-	// when the count is not the one the message's type fixes, or when a signer is not the account
-	// that message names. Each key signs the same serialized message, so the signatures can be
-	// produced anywhere, including on separate machines.
+	// Answers false without touching `out` when the message has no gas offer or a transfer amount the
+	// chain refuses, when a key is missing, when the count is not the one the message's type fixes, or
+	// when a signer is not the account that message names. Each key signs the same serialized
+	// message, so the signatures can be produced anywhere, including on separate machines.
 	static bool SignAndSerialize(
 	    const Blockchain::TxMsg& msg, const std::vector<const PhantasmaKeys*>& keys, ByteArray& out, std::string& outError)
 	{
@@ -1194,6 +1218,10 @@ struct TxMsgSigner {
 		if( msg.maxGas == 0 )
 		{
 			return refuse(NoGasOffer);
+		}
+		if( HasAmountAboveInt64(msg) )
+		{
+			return refuse(AmountAboveInt64);
 		}
 		if( keys.empty() )
 		{
