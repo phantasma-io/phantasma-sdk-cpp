@@ -1146,24 +1146,38 @@ struct TxMsgSigner {
 	// A zero gas offer marks a message that was built and never planned. Both signing calls refuse it
 	// before anything is signed, as the other SDKs do.
 	static constexpr const char* NoGasOffer = "Transaction has no gas offer: plan its fees or set maxGas before signing";
+	static constexpr const char* AmountZero = "Transfer amount must be above zero for a native transfer";
 	static constexpr const char* AmountAboveInt64 = "Transfer amount is above the int64 maximum the chain accepts in a native transfer";
 
-	// Returns true if the message is a native fungible transfer whose amount the chain refuses. The
-	// message carries the amount as a u64, and the chain reads it as a signed 64-bit value, so it
-	// refuses 2^63 or more for every fungible token, big-fungible ones included. A larger amount needs
-	// a module call or a script transfer.
-	static bool HasAmountAboveInt64(const TxMsg& msg)
+	// Returns why the chain refuses the amount of a native fungible transfer, or nullptr when the
+	// message is no such transfer or its amount is one the chain accepts. The message carries the
+	// amount as a u64, and the chain reads it as a signed 64-bit value that must be above zero, so it
+	// refuses zero and 2^63 or more for every fungible token, big-fungible ones included. A larger
+	// amount needs a module call or a script transfer.
+	static const char* TransferAmountRefusal(const TxMsg& msg)
 	{
-		const uint64_t firstRefused = (uint64_t)1 << 63;
+		uint64_t amount = 0;
 		if( msg.type == TxTypes::TransferFungible )
 		{
-			return msg.transferFt.amount >= firstRefused;
+			amount = msg.transferFt.amount;
 		}
-		if( msg.type == TxTypes::TransferFungible_GasPayer )
+		else if( msg.type == TxTypes::TransferFungible_GasPayer )
 		{
-			return msg.transferFtGasPayer.amount >= firstRefused;
+			amount = msg.transferFtGasPayer.amount;
 		}
-		return false;
+		else
+		{
+			return nullptr;
+		}
+		if( amount == 0 )
+		{
+			return AmountZero;
+		}
+		if( amount >= (uint64_t)1 << 63 )
+		{
+			return AmountAboveInt64;
+		}
+		return nullptr;
 	}
 
 	// Signs a message with one key. Answers an empty envelope when exceptions are disabled and the
@@ -1175,9 +1189,9 @@ struct TxMsgSigner {
 			PHANTASMA_EXCEPTION(NoGasOffer);
 			return ByteArray();
 		}
-		if( HasAmountAboveInt64(msg) )
+		if( const char* why = TransferAmountRefusal(msg) )
 		{
-			PHANTASMA_EXCEPTION(AmountAboveInt64);
+			PHANTASMA_EXCEPTION(why);
 			return ByteArray();
 		}
 
@@ -1219,9 +1233,9 @@ struct TxMsgSigner {
 		{
 			return refuse(NoGasOffer);
 		}
-		if( HasAmountAboveInt64(msg) )
+		if( const char* why = TransferAmountRefusal(msg) )
 		{
-			return refuse(AmountAboveInt64);
+			return refuse(why);
 		}
 		if( keys.empty() )
 		{

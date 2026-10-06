@@ -608,8 +608,9 @@ void RunMultiSignerTests(TestContext& ctx)
 		Report(ctx, refused, "signing with one key refuses a message with no gas offer");
 	}
 	{
-		// The chain reads a native transfer amount as a signed 64-bit value, so 2^63 fails on chain
-		// and the int64 maximum does not. Both transfer types and both signing calls refuse the first.
+		// The chain reads a native transfer amount as a signed 64-bit value that must be above zero, so
+		// zero and 2^63 fail on chain while 1 and the int64 maximum do not. Both transfer types and both
+		// signing calls refuse the first two.
 		const uint64_t int64Max = ((uint64_t)1 << 63) - 1;
 		const auto plain = [&](uint64_t amount)
 		{
@@ -646,12 +647,34 @@ void RunMultiSignerTests(TestContext& ctx)
 		Report(ctx, refused, "signing with one key refuses a native transfer of 2^63");
 
 		error.clear();
-		ok = Blockchain::TxMsgSigner::SignAndSerialize(plain(int64Max), { &gasPayer }, envelope, error);
-		Report(ctx, ok, "signing takes a native transfer of the int64 maximum", error);
-		ok = Blockchain::TxMsgSigner::SignAndSerialize(withGasPayer(int64Max), { &gasPayer, &assetOwner }, envelope, error);
-		Report(ctx, ok, "signing takes a gas-payer transfer of the int64 maximum", error);
-		Report(ctx, !Blockchain::TxMsgSigner::SignAndSerialize(plain(int64Max), gasPayer).empty(),
-		    "signing with one key takes a native transfer of the int64 maximum");
+		ok = Blockchain::TxMsgSigner::SignAndSerialize(plain(0), { &gasPayer }, envelope, error);
+		ExpectRefused(ctx, "signing refuses a native transfer of zero", "above zero", ok, error);
+		error.clear();
+		ok = Blockchain::TxMsgSigner::SignAndSerialize(withGasPayer(0), { &gasPayer, &assetOwner }, envelope, error);
+		ExpectRefused(ctx, "signing refuses a gas-payer transfer of zero", "above zero", ok, error);
+
+		refused = false;
+		PHANTASMA_TRY
+		{
+			refused = Blockchain::TxMsgSigner::SignAndSerialize(plain(0), gasPayer).empty();
+		}
+		PHANTASMA_CATCH_ALL()
+		{
+			refused = true;
+		}
+		Report(ctx, refused, "signing with one key refuses a native transfer of zero");
+
+		for( const uint64_t amount : { (uint64_t)1, int64Max } )
+		{
+			const std::string what = amount == 1 ? "one atom" : "the int64 maximum";
+			error.clear();
+			ok = Blockchain::TxMsgSigner::SignAndSerialize(plain(amount), { &gasPayer }, envelope, error);
+			Report(ctx, ok, "signing takes a native transfer of " + what, error);
+			ok = Blockchain::TxMsgSigner::SignAndSerialize(withGasPayer(amount), { &gasPayer, &assetOwner }, envelope, error);
+			Report(ctx, ok, "signing takes a gas-payer transfer of " + what, error);
+			Report(ctx, !Blockchain::TxMsgSigner::SignAndSerialize(plain(amount), gasPayer).empty(),
+			    "signing with one key takes a native transfer of " + what);
+		}
 	}
 }
 

@@ -204,8 +204,8 @@ struct NativeTxHelper {
 	};
 
 	// Moves `amount` atoms of a fungible token, a big-fungible one too. The chain reads the amount as
-	// a signed 64-bit value, so it refuses one above the int64 maximum. A larger amount needs a module
-	// call or a script transfer, whose amounts are big integers.
+	// a signed 64-bit value, so it refuses zero and anything above the int64 maximum. A larger amount
+	// needs a module call or a script transfer, whose amounts are big integers.
 	static Blockchain::TxMsg TransferFungible(
 	    const Parties& parties, const Bytes32& to, uint64_t tokenId, uint64_t amount, const TxLimits& limits = {})
 	{
