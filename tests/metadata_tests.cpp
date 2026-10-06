@@ -177,6 +177,33 @@ void RunMetadataHelperTests(TestContext& ctx)
 		Report(ctx, ok, "MetadataHelper Array string");
 	}
 	{
+		// Text is stored with the spaces around it, in a field and in an array element. The chain
+		// stores it as given, and a unique series hashes the ROM bytes into its NFT id, so the same
+		// input has to give the same bytes in every SDK. Text that is only whitespace is refused.
+		Allocator alloc;
+		const VmNamedVariableSchema name = MakeSchema("name", VmType::String);
+		const VmNamedVariableSchema tags = MakeSchema("tags", VmType::Array_String);
+		std::vector<VmNamedDynamicVariable> fields;
+		std::vector<MetadataField> metadata = {
+			{ "name", MetadataValue::FromString(" My NFT ") },
+			{ "tags", MetadataValue::FromArray({ MetadataValue::FromString(" rare ") }) },
+		};
+		std::string error;
+		const bool pushed = MetadataHelper::PushMetadataField(name, fields, metadata, alloc, error) &&
+		                    MetadataHelper::PushMetadataField(tags, fields, metadata, alloc, error);
+		const bool ok = pushed && fields.size() == 2 &&
+		                std::string(fields[0].value.data.string) == " My NFT " &&
+		                fields[1].value.arrayLength == 1 &&
+		                std::string(fields[1].value.data.stringArray[0]) == " rare ";
+		Report(ctx, ok, "MetadataHelper keeps the spaces around text", error);
+
+		std::vector<VmNamedDynamicVariable> blankFields;
+		std::vector<MetadataField> blank = { { "name", MetadataValue::FromString(" \t ") } };
+		std::string blankError;
+		const bool blankPushed = MetadataHelper::PushMetadataField(name, blankFields, blank, alloc, blankError);
+		ExpectRefused(ctx, "MetadataHelper refuses text that is only whitespace", "is mandatory", blankPushed, blankError);
+	}
+	{
 		Allocator alloc;
 		const VmNamedVariableSchema schema = MakeSchema("deltas", VmType::Array_Int8);
 		std::vector<VmNamedDynamicVariable> fields;

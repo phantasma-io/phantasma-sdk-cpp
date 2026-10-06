@@ -471,6 +471,10 @@ struct MetadataHelper {
 		return true;
 	}
 
+	// Returns false and fills outError when the value is not a string or holds only whitespace.
+	// Otherwise `out` is the text exactly as given. The chain stores text as it comes, and a unique
+	// series takes its NFT id from the ROM bytes, so trimming here would give the same input a
+	// different NFT id than the other SDKs give it.
 	static bool EnsureNonEmptyString(const std::string& fieldName, const MetadataValue& value, std::string& out, std::string& outError)
 	{
 		if( value.kind != MetadataValue::Kind::String )
@@ -480,14 +484,14 @@ struct MetadataHelper {
 			outError = invalid;
 			return false;
 		}
-		out = TrimWhitespace(value.stringValue);
-		if( out.empty() )
+		if( TrimWhitespace(value.stringValue).empty() )
 		{
 			const std::string invalid = "Metadata field '" + fieldName + "' is mandatory";
 			PHANTASMA_EXCEPTION_MESSAGE("Metadata string invalid", invalid);
 			outError = invalid;
 			return false;
 		}
+		out = value.stringValue;
 		return true;
 	}
 
