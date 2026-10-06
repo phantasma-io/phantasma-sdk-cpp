@@ -1181,34 +1181,21 @@ struct TxMsgSigner {
 	}
 
 	// Signs a message with one key. Answers an empty envelope when exceptions are disabled and the
-	// message has no gas offer or carries a transfer amount the chain refuses.
+	// call below refuses the message: no gas offer, a transfer amount the chain refuses, a type that
+	// takes two witnesses, or a key that is not the account the message names.
+	//
+	// It signs through the call that takes a list of keys because that call checks the witness count
+	// and the signers first. Without exceptions the envelope writer does not stop on a witness list
+	// that does not fit the type, and it would read past the end of that list.
 	static ByteArray SignAndSerialize(const TxMsg& msg, const PhantasmaKeys& keys)
 	{
-		if( msg.maxGas == 0 )
+		ByteArray envelope;
+		std::string refusal;
+		if( !SignAndSerialize(msg, { &keys }, envelope, refusal) )
 		{
-			PHANTASMA_EXCEPTION(NoGasOffer);
 			return ByteArray();
 		}
-		if( const char* why = TransferAmountRefusal(msg) )
-		{
-			PHANTASMA_EXCEPTION(why);
-			return ByteArray();
-		}
-
-		const ByteArray serializedMsg = SerializeTx(msg);
-		const Ed25519Signature sig = Ed25519Signature::Generate(keys, serializedMsg);
-		Bytes64 sigBytes(sig.Bytes(), Ed25519Signature::Length);
-
-		Witness witness{ Bytes32(keys.GetPublicKey()), sigBytes };
-
-		SignedTxMsg signedMsg;
-		signedMsg.msg = msg;
-		signedMsg.witnesses = Witnesses{ 1, &witness };
-
-		ByteArray buffer;
-		WriteView w(buffer);
-		Write(signedMsg, w);
-		return buffer;
+		return envelope;
 	}
 
 	// Signs a message with several keys. A _GasPayer message is signed twice: the gas payer first,

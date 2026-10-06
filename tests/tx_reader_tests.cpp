@@ -676,6 +676,37 @@ void RunMultiSignerTests(TestContext& ctx)
 			    "signing with one key takes a native transfer of " + what);
 		}
 	}
+	{
+		// The one-key call signs through the call that takes a list of keys. A message one key may sign
+		// gets the same envelope from both. A type that takes two witnesses, and a key that is not the
+		// gas payer the message names, are refused: the call throws when exceptions are enabled and
+		// answers an empty envelope when they are not, as in this test binary.
+		Blockchain::TxMsg transfer = BaseMsg(TxTypes::TransferFungible);
+		transfer.gasFrom = gasPub;
+		transfer.transferFt = Blockchain::TxMsgTransferFungible{ assetPub, 1, 5 };
+
+		ByteArray listed;
+		std::string error;
+		const bool ok = Blockchain::TxMsgSigner::SignAndSerialize(transfer, { &gasPayer }, listed, error);
+		Report(ctx, ok && Blockchain::TxMsgSigner::SignAndSerialize(transfer, gasPayer) == listed,
+		    "signing with one key writes the envelope the list call writes", error);
+
+		const auto refusedWithOneKey = [&](const Blockchain::TxMsg& message, const PhantasmaKeys& key)
+		{
+			bool refused = false;
+			PHANTASMA_TRY
+			{
+				refused = Blockchain::TxMsgSigner::SignAndSerialize(message, key).empty();
+			}
+			PHANTASMA_CATCH_ALL()
+			{
+				refused = true;
+			}
+			return refused;
+		};
+		Report(ctx, refusedWithOneKey(msg, gasPayer), "signing with one key refuses a type that takes two witnesses");
+		Report(ctx, refusedWithOneKey(transfer, assetOwner), "signing with one key refuses a key that is not the gas payer");
+	}
 }
 
 // The native builders. Each one must produce the message type the chain prices, with the accounts
