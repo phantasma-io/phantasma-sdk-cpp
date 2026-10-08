@@ -18,6 +18,13 @@ class ScriptBuilder
 
 	PHANTASMA_MAP<int, String> _jumpLocations;
 	PHANTASMA_MAP<String, int> _labelLocations;
+	// The offsets in _jumpLocations that a CALL reserved. Every other offset belongs to a jump.
+	PHANTASMA_MAP<int, bool> _callOffsets;
+
+	// The farthest targets the chain accepts. It reads a target from two bytes: a jump target as a
+	// signed number, a call target as an unsigned one.
+	static constexpr int MaxJumpTarget = 0x7FFF;
+	static constexpr int MaxCallTarget = 0xFFFF;
 
 	static ByteArray ToCsharpBytes(const BigInteger& n)
 	{
@@ -408,6 +415,7 @@ class ScriptBuilder
 		writer.Write((uint16_t)0);
 
 		_jumpLocations[ofs] = label;
+		_callOffsets[ofs] = true;
 		return *this;
 	}
 
@@ -459,8 +467,17 @@ class ScriptBuilder
 				PHANTASMA_EXCEPTION("ScriptBuilder: jump to an unknown label");
 				return ByteArray();
 			}
-			uint16_t labelOffset = (uint16_t)found->second;
 			auto targetOffset = entry.first;
+
+			// A larger offset would be cut to its low 16 bits, and the jump would land somewhere else.
+			// The chain refuses a jump target of 0x8000 or more.
+			const int limit = _callOffsets.find(targetOffset) != _callOffsets.end() ? MaxCallTarget : MaxJumpTarget;
+			if( found->second > limit )
+			{
+				PHANTASMA_EXCEPTION("ScriptBuilder: label offset above the largest target allowed here");
+				return ByteArray();
+			}
+			uint16_t labelOffset = (uint16_t)found->second;
 
 			script[targetOffset + 0] = labelOffset & 0xFF;
 			script[targetOffset + 1] = (labelOffset >> 8) & 0xFF;

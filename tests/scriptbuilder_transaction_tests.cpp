@@ -35,6 +35,48 @@ void RunScriptBuilderTransactionTests(TestContext& ctx)
 		}
 		Report(ctx, refused, "ScriptBuilder refuses a jump to an unknown label");
 	}
+	// The chain reads a jump target as a signed 16-bit number, so a jump reaches offset 32767 at most,
+	// and a call target as an unsigned one. A farther target is refused like an unknown label.
+	{
+		// A JMP takes 3 bytes and the label's NOP 1, so after `fill` zero bytes the label sits at
+		// fill + 4. A CALL takes 4 bytes, so its label sits at fill + 5.
+		const auto jumpOver = [](int fill)
+		{
+			const ByteArray zeros((size_t)fill, (Byte)0);
+			ScriptBuilder sb;
+			sb.EmitJump(Opcode::JMP, "far").EmitRaw(zeros.data(), fill).EmitLabel("far");
+			return sb.EndScript();
+		};
+		const auto callOver = [](int fill)
+		{
+			const ByteArray zeros((size_t)fill, (Byte)0);
+			ScriptBuilder sb;
+			sb.EmitCall("far", 1).EmitRaw(zeros.data(), fill).EmitLabel("far");
+			return sb.EndScript();
+		};
+		const auto refused = [](const auto& build, int fill)
+		{
+			bool empty = false;
+			PHANTASMA_TRY
+			{
+				empty = build(fill).empty();
+			}
+			PHANTASMA_CATCH_ALL()
+			{
+				empty = true;
+			}
+			return empty;
+		};
+		Report(ctx, !jumpOver(32763).empty(), "ScriptBuilder takes a jump to offset 32767");
+		Report(ctx, refused(jumpOver, 32764), "ScriptBuilder refuses a jump to offset 32768");
+		// 32769 is 0x8001: beyond the jump limit, and still a valid call target.
+		const ByteArray call = callOver(32764);
+		Report(ctx, call.size() > 3 && call[2] == 0x01 && call[3] == 0x80, "ScriptBuilder takes a call to offset 32769");
+		Report(ctx, !callOver(65530).empty(), "ScriptBuilder takes a call to offset 65535");
+		// 65536 does not fit two bytes. Without the check it would be cut to 0, a call to the start of
+		// the script.
+		Report(ctx, refused(callOver, 65531), "ScriptBuilder refuses a call to offset 65536");
+	}
 
 	const ByteArray script = BuildConsensusSingleVoteScript();
 	const std::string scriptHex = ToUpper(BytesToHex(script));
