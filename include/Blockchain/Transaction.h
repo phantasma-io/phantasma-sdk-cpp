@@ -210,11 +210,22 @@ class Transaction : public Serializable
 		{
 			Int64 varInt{};
 			reader.ReadVarInt(varInt);
-			int signatureCount = (int)varInt;
-			m_signatures.resize(signatureCount);
-			for( int i = 0; i < signatureCount; i++ )
+			// The count comes from the input. Each signature takes at least one byte, so a count above
+			// the bytes left cannot be real, and allocating it could end the program. Such a section
+			// reads as no signatures.
+			const Int64 bytesLeft = (Int64)reader.ToArray().size() - (Int64)reader.Position();
+			if( varInt < 0 || varInt > bytesLeft )
 			{
-				reader.ReadSignature(m_signatures[i]);
+				m_signatures.clear();
+			}
+			else
+			{
+				const size_t signatureCount = (size_t)varInt;
+				m_signatures.resize(signatureCount);
+				for( size_t i = 0; i < signatureCount; i++ )
+				{
+					reader.ReadSignature(m_signatures[i]);
+				}
 			}
 		}
 		PHANTASMA_CATCH_ALL()

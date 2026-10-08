@@ -112,6 +112,28 @@ void RunScriptBuilderTransactionTests(TestContext& ctx)
 	    knownTx.Signatures().size() == 1;
 	Report(ctx, knownOk, "Transaction unserialize");
 
+	// The signature count comes from the input. A count above the bytes left reads as no signatures;
+	// allocating it would end the program.
+	{
+		// The known transaction's bytes before its signature count, and its one signature after it.
+		const ByteArray unsignedBytes = knownTx.ToByteArray(false);
+		const ByteArray signatureBytes(knownBytes.begin() + unsignedBytes.size() + 1, knownBytes.end());
+		const auto readWithCount = [&](const ByteArray& count)
+		{
+			ByteArray bytes = unsignedBytes;
+			bytes.insert(bytes.end(), count.begin(), count.end());
+			bytes.insert(bytes.end(), signatureBytes.begin(), signatureBytes.end());
+			BinaryReader countReader(bytes);
+			return Transaction::Unserialize(countReader);
+		};
+		const Transaction farAbove = readWithCount(HexToBytes("FEFFFFFF7F"));
+		Report(ctx, farAbove.Signatures().empty() && ToUpper(BytesToHex(farAbove.Script())) == "010203",
+		    "Transaction unserialize reads a signature count above the bytes left as no signatures");
+		const Transaction negative = readWithCount(HexToBytes("FFFFFFFFFFFFFFFFFF"));
+		Report(ctx, negative.Signatures().empty() && ToUpper(BytesToHex(negative.Script())) == "010203",
+		    "Transaction unserialize reads a negative signature count as no signatures");
+	}
+
 	TokenEventData tokenEvent("KCAL", BigInteger(42), "main");
 	BinaryWriter tokenWriter;
 	tokenWriter.WriteSerializable(tokenEvent);
