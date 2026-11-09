@@ -459,6 +459,20 @@
          return;
 
 ------------------------------------------------------------------------------
+ Reserved metadata keys
+------------------------------------------------------------------------------
+ Token metadata keys that start with `_` belong to the chain: the staking
+  settings, the inflation settings, the contract seal and `_brn`, the burned supply
+  that genesis recorded for a token. The chain refuses any other key that starts
+  with `_`. It refuses `_brn` in an update, because only genesis sets it.
+
+ The SDK refuses these keys before anything is signed.
+  `TokenMetadataBuilder::BuildAndSerialize` takes no key that starts with `_`
+  among its string fields, because the chain's own keys are typed values.
+  `UpdateTokenMetadataTxHelper` lets an update set the chain's own keys. It lets
+  an update name any other `_` key only to remove it.
+
+------------------------------------------------------------------------------
  API configuration
 ------------------------------------------------------------------------------
  As different C++ projects may use different primitive types, you can use the 

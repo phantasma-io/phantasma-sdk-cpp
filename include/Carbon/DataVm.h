@@ -44,6 +44,7 @@ struct StandardMeta {
 		inline static const SmallString inflation_amounts{ "_ia" };
 		inline static const SmallString inflation_initial_begin{ "_iib" };
 		inline static const SmallString inflation_initial_end{ "_iie" };
+		inline static const SmallString inflation_force_reset{ "_ifr" };
 		inline static const SmallString sealed_contract{ "_sealed_c" };
 
 		struct Nft {

@@ -33,6 +33,7 @@ void RunInt256SignGuardByteTests(testutil::TestContext& ctx);
 void RunTokenBuilderValidationTests(testutil::TestContext& ctx);
 void RunTokenSchemasWireTests(testutil::TestContext& ctx);
 void RunTokenSealTests(testutil::TestContext& ctx);
+void RunTokenReservedKeysTests(testutil::TestContext& ctx);
 void RunPreflightSubjectTests(testutil::TestContext& ctx);
 void RunTokenAmountTests(testutil::TestContext& ctx);
 void RunEncodingRoundtripTests(testutil::TestContext& ctx);

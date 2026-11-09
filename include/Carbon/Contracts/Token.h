@@ -468,11 +468,11 @@ struct TokenMetadataBuilder {
   public:
 	// Writes the serialized metadata of a new token to `out`. `metaFields` are strings and must hold
 	// `name`, `icon`, `url` and `description`. `icon` is a base64 data URI of a PNG, JPEG or WebP
-	// image. `options.sealContract` adds the contract seal.
+	// image. No key may start with `_`, because the chain keeps such keys for its own settings.
+	// `options.sealContract` adds the contract seal.
 	//
-	// Answers false without touching `out` when the metadata is refused: the key `_sealed_c` is among
-	// the string fields, a mandatory field is missing, or the icon is not a base64 data URI of a known
-	// image type.
+	// Answers false without touching `out` when the metadata is refused: a key starts with `_`, a
+	// mandatory field is missing, or the icon is not a base64 data URI of a known image type.
 	static bool BuildAndSerialize(
 	    const std::vector<std::pair<std::string, std::string>>& metaFields,
 	    ByteArray& out,
@@ -500,6 +500,19 @@ struct TokenMetadataBuilder {
 			PHANTASMA_EXCEPTION(sealAsString);
 			outError = sealAsString;
 			return false;
+		}
+		// The chain keeps the keys that start with `_` for its own settings and refuses any other such
+		// key. Its settings are typed values, so a string field that starts with `_` is never a valid
+		// setting.
+		for( const auto& kv : metaFields )
+		{
+			if( !kv.first.empty() && kv.first[0] == '_' )
+			{
+				const std::string reserved = kv.first + " is reserved for the chain: string metadata fields cannot start with _";
+				PHANTASMA_EXCEPTION(reserved.c_str());
+				outError = reserved;
+				return false;
+			}
 		}
 		std::vector<std::string> missing;
 		for( const auto& field : required )

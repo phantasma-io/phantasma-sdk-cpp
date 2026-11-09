@@ -381,14 +381,17 @@ struct CreateTokenTxHelper {
 //
 // A field is removed by sending it as an empty Array_Dynamic, the only form the chain reads as a
 // removal. In this SDK that is a value of type VmType::Array with arrayLength 0. A Dynamic value
-// without data is stored like any other value.
+// without data is stored like any other value. The keys that start with `_` belong to the chain. An
+// update may set the chain's own settings, and it may name any other such key only to remove it. An
+// update may not name `_brn` at all.
 //
 // The planner has no formula for this call and prices it with the script budget, so the plan is an
 // upper bound (FeePlan::exact is false). The chain charges the transfer fee and the storage the
 // token's row grows by.
 struct UpdateTokenMetadataTxHelper {
-	// Answers false without touching `out` when the update is refused: token id 0, no fields, or a
-	// `_sealed_c` other than the Int64 1.
+	// Answers false without touching `out` when the update is refused: token id 0, no fields, a
+	// `_sealed_c` other than the Int64 1, `_brn` in any form, or another `_` key the chain does not
+	// define with a value that does not remove it.
 	static bool BuildTx(
 	    uint64_t tokenId,
 	    const VmDynamicStruct& metadata,
@@ -413,7 +416,7 @@ struct UpdateTokenMetadataTxHelper {
 		}
 
 		// operator[] finds a field by binary search, so it needs the fields sorted by name. A caller may
-		// pass them in any order, because Write sorts them. The lookup therefore reads a sorted copy.
+		// pass them in any order, because Write sorts them. The two lookups therefore read a sorted copy.
 		std::vector<VmNamedDynamicVariable> sortedFields(metadata.fields, metadata.fields + metadata.numFields);
 		const VmDynamicStruct sorted = VmDynamicStruct::Sort((uint32_t)sortedFields.size(), sortedFields.data());
 
@@ -422,6 +425,22 @@ struct UpdateTokenMetadataTxHelper {
 		if( seal && !(seal->type == VmType::Int64 && seal->data.int64 == 1) )
 		{
 			return refuse("_sealed_c must be the Int64 1: build it with TokenMetadataBuilder::BuildContractSealUpdate");
+		}
+		// Only genesis sets `_brn`, so the chain refuses an update that names it, a removal included.
+		if( sorted[StandardMeta::Token::pre_burn] )
+		{
+			return refuse("_brn is set at genesis only");
+		}
+		// The chain refuses metadata that keeps a `_` key it does not define. A token may hold such a key
+		// from before the chain reserved these keys. Only an update that removes the key can then succeed.
+		for( uint32_t i = 0; i != metadata.numFields; ++i )
+		{
+			const VmNamedDynamicVariable& field = metadata.fields[i];
+			const bool reserved = field.name.length != 0 && field.name.bytes[0] == '_';
+			if( reserved && !IsUpdatableChainKey(field.name) && !RemovesField(field.value) )
+			{
+				return refuse(std::string(field.name.bytes, field.name.length) + " is reserved for the chain: an update can only remove it");
+			}
 		}
 
 		TxEnvelope env;
@@ -446,6 +465,48 @@ struct UpdateTokenMetadataTxHelper {
 		// would leave that view pointing at the buffer of the envelope it was copied from.
 		out = std::move(env);
 		return true;
+	}
+
+  private:
+	// Returns true if an update may set the key: one of the chain's own settings, or `_ifr`, the
+	// inflation reset that the chain applies and does not store. `_brn` is not among them, because
+	// only genesis sets it.
+	static bool IsUpdatableChainKey(const SmallString& key)
+	{
+		const SmallString* const updatable[] = {
+			&StandardMeta::Token::staking_org_id,
+			&StandardMeta::Token::staking_org_threshold,
+			&StandardMeta::Token::staking_reward_token,
+			&StandardMeta::Token::staking_reward_period,
+			&StandardMeta::Token::staking_reward_mul,
+			&StandardMeta::Token::staking_reward_div,
+			&StandardMeta::Token::staking_lock,
+			&StandardMeta::Token::staking_booster_token,
+			&StandardMeta::Token::staking_booster_mul,
+			&StandardMeta::Token::staking_booster_div,
+			&StandardMeta::Token::staking_booster_limit,
+			&StandardMeta::Token::inflation_period,
+			&StandardMeta::Token::inflation_amounts,
+			&StandardMeta::Token::inflation_initial_begin,
+			&StandardMeta::Token::inflation_initial_end,
+			&StandardMeta::Token::inflation_force_reset,
+			&StandardMeta::Token::sealed_contract,
+		};
+		for( const SmallString* name : updatable )
+		{
+			if( *name == key )
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Returns true if the value removes its field. The chain reads only an empty Array_Dynamic as
+	// null. VmType::Array is the Array_Dynamic type of this SDK.
+	static bool RemovesField(const VmDynamicVariable& value)
+	{
+		return value.type == VmType::Array && value.arrayLength == 0;
 	}
 };
 

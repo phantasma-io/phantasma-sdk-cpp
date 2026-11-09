@@ -165,8 +165,8 @@ void RunTokenSealTests(TestContext& ctx)
 		ExpectRefused(ctx, "a seal of another value is refused", "_sealed_c must be the Int64 1",
 		    UpdateTokenMetadataTxHelper::BuildTx(42, Update(asTwo), owner, env, twoError), twoError);
 	}
-	// An empty Array_Dynamic removes a field. The seal is never removed: the chain refuses that for a
-	// sealed token, and a token without a seal has none.
+	// An empty Array_Dynamic removes a field, and an update may remove other `_` keys that way. The seal
+	// is never removed: the chain refuses that for a sealed token, and a token without a seal has none.
 	{
 		VmNamedDynamicVariable removal{ SmallString("_sealed_c"), MetadataFieldRemoval() };
 		TxEnvelope env;
