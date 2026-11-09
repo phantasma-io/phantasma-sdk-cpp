@@ -374,6 +374,81 @@ struct CreateTokenTxHelper {
 	}
 };
 
+// Builds Token.UpdateTokenMetadata, which the token owner or governance sends to change a token's
+// metadata. The chain merges the update into the stored metadata field by field, so a field the
+// update leaves out keeps its value. TokenMetadataBuilder::BuildContractSealUpdate returns the update
+// that seals a token against VM contracts.
+//
+// A field is removed by sending it as an empty Array_Dynamic, the only form the chain reads as a
+// removal. In this SDK that is a value of type VmType::Array with arrayLength 0. A Dynamic value
+// without data is stored like any other value.
+//
+// The planner has no formula for this call and prices it with the script budget, so the plan is an
+// upper bound (FeePlan::exact is false). The chain charges the transfer fee and the storage the
+// token's row grows by.
+struct UpdateTokenMetadataTxHelper {
+	// Answers false without touching `out` when the update is refused: token id 0, no fields, or a
+	// `_sealed_c` other than the Int64 1.
+	static bool BuildTx(
+	    uint64_t tokenId,
+	    const VmDynamicStruct& metadata,
+	    const Bytes32& ownerPublicKey,
+	    TxEnvelope& out,
+	    std::string& outError,
+	    const TxLimits& limits = {})
+	{
+		const auto refuse = [&outError](const std::string& why)
+		{
+			PHANTASMA_EXCEPTION(why.c_str());
+			outError = why;
+			return false;
+		};
+		if( tokenId == 0 )
+		{
+			return refuse("tokenId must be between 1 and 2^64 - 1: the chain assigns no token id 0");
+		}
+		if( metadata.numFields == 0 || metadata.fields == nullptr )
+		{
+			return refuse("A metadata update needs at least one field");
+		}
+
+		// operator[] finds a field by binary search, so it needs the fields sorted by name. A caller may
+		// pass them in any order, because Write sorts them. The lookup therefore reads a sorted copy.
+		std::vector<VmNamedDynamicVariable> sortedFields(metadata.fields, metadata.fields + metadata.numFields);
+		const VmDynamicStruct sorted = VmDynamicStruct::Sort((uint32_t)sortedFields.size(), sortedFields.data());
+
+		// The chain takes the seal only as the Int64 1, and a seal cannot be removed.
+		const VmDynamicVariable* seal = sorted[StandardMeta::Token::sealed_contract];
+		if( seal && !(seal->type == VmType::Int64 && seal->data.int64 == 1) )
+		{
+			return refuse("_sealed_c must be the Int64 1: build it with TokenMetadataBuilder::BuildContractSealUpdate");
+		}
+
+		TxEnvelope env;
+
+		ByteArray argsBuffer;
+		WriteView argsWriter(argsBuffer);
+		Write8u(tokenId, argsWriter);
+		Write(metadata, argsWriter);
+		env.buffers.push_back(argsBuffer);
+
+		env.msg.type = phantasma::carbon::Blockchain::TxTypes::Call;
+		TxLimitsDetail::Apply(env.msg, limits);
+		env.msg.gasFrom = ownerPublicKey;
+		env.msg.payload = SmallString();
+		env.msg.call = phantasma::carbon::Blockchain::TxMsgCall{
+			(uint32_t)ModuleId::Token,
+			(uint32_t)TokenContract_Methods::UpdateTokenMetadata,
+			ByteView{ env.buffers.back().data(), env.buffers.back().size() },
+			{}
+		};
+		// Moved, never copied: env.msg.call.args is a view into env.buffers, and a copy of the vector
+		// would leave that view pointing at the buffer of the envelope it was copied from.
+		out = std::move(env);
+		return true;
+	}
+};
+
 struct CreateTokenSeriesTxHelper {
 	static TxEnvelope BuildTx(uint64_t tokenId, const SeriesInfo& seriesInfo, const Bytes32& creatorPublicKey, const TxLimits& limits = {})
 	{

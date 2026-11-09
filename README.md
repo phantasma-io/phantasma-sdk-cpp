@@ -400,6 +400,65 @@
   to outlive it too.
 
 ------------------------------------------------------------------------------
+ Changing token metadata
+------------------------------------------------------------------------------
+ `UpdateTokenMetadataTxHelper` builds `Token.UpdateTokenMetadata`, signed by the
+  token owner. The chain merges an update into the stored metadata field by field,
+  so a field the update does not name keeps its value. A field is removed by
+  sending it as an empty `Array_Dynamic`, which this SDK names `VmType::Array`.
+  This is the only value the chain reads as a removal:
+
+     VmDynamicVariable removal;
+     removal.type = VmType::Array; // an Array_Dynamic with no items
+
+     VmNamedDynamicVariable fields[2] = {
+         { SmallString("description"), VmDynamicVariable("A new description") },
+         { SmallString("website"), removal },
+     };
+     const VmDynamicStruct update = VmDynamicStruct::Sort(2, fields);
+
+     TxEnvelope env;
+     std::string error;
+     if( !UpdateTokenMetadataTxHelper::BuildTx(tokenId, update, ownerPublicKey, env, error) )
+         return; // error says why the update is refused
+
+ The message is planned, signed and sent like any other (see "Carbon transaction
+  fees"). The planner prices `Token.UpdateTokenMetadata` with the script budget,
+  so its plan is an upper bound (`plan.exact` is false). The chain charges the
+  transfer fee and the storage the update adds.
+
+------------------------------------------------------------------------------
+ Sealing a token against contracts
+------------------------------------------------------------------------------
+ A sealed token never gets a VM contract, from its owner or from governance. Only
+  a token without a contract can be sealed, and the seal cannot be removed.
+
+ The seal blocks VM contracts only. A sealed token can be minted, transferred and
+  burned, and it can get new NFT series and NFT mints. Its other metadata fields
+  can be changed.
+
+ The seal is the metadata field `_sealed_c` holding the Int64 value 1.
+
+ Seal a token when it is created:
+
+     TokenMetadataOptions options;
+     options.sealContract = true;
+     ByteArray metadata;
+     std::string error;
+     if( !TokenMetadataBuilder::BuildAndSerialize(fields, metadata, error, options) )
+         return; // error says why the metadata is refused
+
+ Seal a token that already exists. The update lives in `storage`, so the allocator
+  has to outlive the call:
+
+     Allocator storage;
+     TxEnvelope env;
+     std::string error;
+     if( !UpdateTokenMetadataTxHelper::BuildTx(
+             tokenId, TokenMetadataBuilder::BuildContractSealUpdate(storage), ownerPublicKey, env, error) )
+         return;
+
+------------------------------------------------------------------------------
  API configuration
 ------------------------------------------------------------------------------
  As different C++ projects may use different primitive types, you can use the 

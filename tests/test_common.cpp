@@ -203,6 +203,24 @@ const std::string& SampleIcon()
 	return icon;
 }
 
+std::vector<std::pair<std::string, std::string>> TokenCreationFields()
+{
+	return {
+		{ "name", "My test token!" },
+		{ "icon", SampleIcon() },
+		{ "url", "http://example.com" },
+		{ "description", "My test token description" },
+	};
+}
+
+VmDynamicVariable MetadataFieldRemoval()
+{
+	VmDynamicVariable removal;
+	removal.type = VmType::Array;
+	removal.arrayLength = 0;
+	return removal;
+}
+
 Bytes32 ToBytes32(const ByteArray& bytes)
 {
 	Bytes32 out{};

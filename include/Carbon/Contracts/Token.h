@@ -324,8 +324,25 @@ struct SeriesInfoOwned {
 	}
 };
 
+// Options of TokenMetadataBuilder::BuildAndSerialize.
+struct TokenMetadataOptions {
+	// Whether the token is sealed against VM contracts at creation. True adds `_sealed_c` = 1 as an
+	// Int64 to the metadata. A sealed token never gets a VM contract, from its owner or from
+	// governance. Only a token without a contract can be sealed, and the seal cannot be removed. The
+	// seal blocks VM contracts only. A sealed token can be minted, transferred and burned, and it can
+	// get new NFT series and NFT mints. Its other metadata fields can be changed.
+	bool sealContract = false;
+};
+
+// Builds token metadata: the fields a token is created with, and the update that seals a token.
 struct TokenMetadataBuilder {
   private:
+	// Returns the contract seal field: `_sealed_c` holding the Int64 1, the only form the chain takes.
+	static VmNamedDynamicVariable ContractSealField()
+	{
+		return VmNamedDynamicVariable{ StandardMeta::Token::sealed_contract, VmDynamicVariable((int64_t)1) };
+	}
+
 	static std::string TrimWhitespace(const std::string& text)
 	{
 		size_t start = 0;
@@ -449,9 +466,18 @@ struct TokenMetadataBuilder {
 	}
 
   public:
-	// Answers false without touching `out` when the metadata is refused: it is missing a mandatory
-	// field, or its icon is not a base64 data URI of a known image type.
-	static bool BuildAndSerialize(const std::vector<std::pair<std::string, std::string>>& metaFields, ByteArray& out, std::string& outError)
+	// Writes the serialized metadata of a new token to `out`. `metaFields` are strings and must hold
+	// `name`, `icon`, `url` and `description`. `icon` is a base64 data URI of a PNG, JPEG or WebP
+	// image. `options.sealContract` adds the contract seal.
+	//
+	// Answers false without touching `out` when the metadata is refused: the key `_sealed_c` is among
+	// the string fields, a mandatory field is missing, or the icon is not a base64 data URI of a known
+	// image type.
+	static bool BuildAndSerialize(
+	    const std::vector<std::pair<std::string, std::string>>& metaFields,
+	    ByteArray& out,
+	    std::string& outError,
+	    const TokenMetadataOptions& options = {})
 	{
 		const std::vector<std::string> required = { "name", "icon", "url", "description" };
 		std::map<std::string, std::string> lookup;
@@ -463,6 +489,16 @@ struct TokenMetadataBuilder {
 		{
 			PHANTASMA_EXCEPTION("Token metadata is mandatory");
 			outError = "Token metadata is mandatory";
+			return false;
+		}
+		// The chain takes the seal only as the Int64 1, and these fields are strings. So the seal key
+		// is refused here with a message that names the option.
+		if( lookup.count(StandardMeta::Token::sealed_contract.c_str()) != 0 )
+		{
+			const char* sealAsString =
+			    "Pass TokenMetadataOptions::sealContract = true to seal a token against contracts: _sealed_c holds the Int64 1, which a string field cannot carry";
+			PHANTASMA_EXCEPTION(sealAsString);
+			outError = sealAsString;
 			return false;
 		}
 		std::vector<std::string> missing;
@@ -503,12 +539,29 @@ struct TokenMetadataBuilder {
 			    SmallString(kv.first.c_str(), (phantasma::carbon::size_t)kv.first.size()),
 			    VmDynamicVariable(storage.back().c_str()) });
 		}
+		if( options.sealContract )
+		{
+			fields.push_back(ContractSealField());
+		}
 
 		VmDynamicStruct meta = VmDynamicStruct::Sort((uint32_t)fields.size(), fields.data());
 		out.clear();
 		WriteView w(out);
 		Write(meta, w);
 		return true;
+	}
+
+	// Returns the metadata update that seals an existing token against VM contracts, for
+	// UpdateTokenMetadataTxHelper. The chain merges an update into the stored metadata, so every other
+	// field keeps its value. The rules of the seal are those of TokenMetadataOptions::sealContract. A
+	// token that has a VM contract cannot be sealed.
+	//
+	// The one field of the update lives in `alloc`, so `alloc` has to outlive the update.
+	static VmDynamicStruct BuildContractSealUpdate(Allocator& alloc)
+	{
+		VmNamedDynamicVariable* storage = alloc.Alloc<VmNamedDynamicVariable>(1);
+		storage[0] = ContractSealField();
+		return VmDynamicStruct::Sort(1, storage);
 	}
 };
 

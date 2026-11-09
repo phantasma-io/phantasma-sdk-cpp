@@ -134,6 +134,11 @@ std::vector<std::string> SplitCsv(const std::string& s);
 std::vector<ByteArray> ParseArrBytes2D(const std::string& s);
 std::vector<Row> LoadRows(const std::string& path);
 const std::string& SampleIcon();
+// The four display fields a token creation needs, with SampleIcon() as the icon.
+std::vector<std::pair<std::string, std::string>> TokenCreationFields();
+// An empty Array_Dynamic, the only value the chain reads as the removal of a metadata field. This SDK
+// names that type VmType::Array.
+VmDynamicVariable MetadataFieldRemoval();
 Bytes32 ToBytes32(const ByteArray& bytes);
 VmNamedVariableSchema MakeSchema(const char* name, VmType type, const VmStructSchema* structSchema = nullptr);
 VmStructSchema MakeStructSchema(VmNamedVariableSchema* fields, uint32_t count, bool allowDynamicExtras = false);
