@@ -4,8 +4,8 @@ namespace testcases {
 using namespace testutil;
 
 // The values MetadataHelper takes for NFT data and series metadata: Int64 and Int256 values given as
-// strings of decimal digits. NFT data is written by its schema: only the values, in schema order, so
-// the bytes below are the layout the chain reads.
+// strings of decimal digits, and typed values for Dynamic and Array_Dynamic fields. NFT data is written
+// by its schema: only the values, in schema order, so the bytes below are the layout the chain reads.
 // The expected bytes are what the TypeScript SDK writes for the same schema and values, and the C# SDK's
 // tests compose the same layouts.
 
@@ -174,11 +174,108 @@ void RunDigitStringTests(TestContext& ctx)
 	}
 }
 
+void RunDynamicValueTests(TestContext& ctx)
+{
+	// A Dynamic field can hold a value of any VM type, and the chain stores the type with the value. So
+	// the value names its type: MetadataValue::FromDynamic, its value given as for a field of that type.
+	{
+		Allocator alloc;
+		std::vector<VmNamedDynamicVariable> fields;
+		std::string error;
+		const bool pushed = PushOne(MakeSchema("extra", VmType::Dynamic),
+		    MetadataValue::FromDynamic(VmType::Int64, MetadataValue::FromString("9007199254740993")), alloc, fields, error);
+		const VmDynamicVariable* held = pushed && fields[0].value.type == VmType::Dynamic ? fields[0].value.data.dynamic : nullptr;
+		Report(ctx, held && held->type == VmType::Int64 && held->data.int64 == 9007199254740993ull,
+		    "a Dynamic field stores a Dynamic around the typed value", error);
+	}
+	{
+		Allocator alloc;
+		std::vector<VmNamedDynamicVariable> fields;
+		std::string error;
+		const bool pushed = PushOne(MakeSchema("extra", VmType::Dynamic),
+		    MetadataValue::FromDynamic(VmType::Array_String,
+		        MetadataValue::FromArray({ MetadataValue::FromString("a"), MetadataValue::FromString("b") })),
+		    alloc, fields, error);
+		const VmDynamicVariable* held = pushed ? fields[0].value.data.dynamic : nullptr;
+		Report(ctx,
+		    held && held->type == VmType::Array_String && held->arrayLength == 2 && std::string(held->data.stringArray[0]) == "a" &&
+		        std::string(held->data.stringArray[1]) == "b",
+		    "a Dynamic field stores an array value", error);
+	}
+	{
+		Allocator alloc;
+		std::vector<VmNamedDynamicVariable> fields;
+		std::string error;
+		const std::string root = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+		const bool pushed = PushOne(MakeSchema("extras", VmType::Array),
+		    MetadataValue::FromArray({ MetadataValue::FromDynamic(VmType::Int32, MetadataValue::FromInt64(5)),
+		        MetadataValue::FromDynamic(VmType::Bytes32, MetadataValue::FromString(root)) }),
+		    alloc, fields, error);
+		const VmDynamicVariable* value = pushed ? &fields[0].value : nullptr;
+		const VmDynamicVariable* items = value ? value->data.dynamicArray : nullptr;
+		Report(ctx,
+		    value && value->type == VmType::Array && value->arrayLength == 2 && items[0].type == VmType::Int32 &&
+		        items[0].data.int32 == 5 && items[1].type == VmType::Bytes32 && items[1].data.bytes32 == Bytes32(HexToBytes(root)),
+		    "an Array_Dynamic field stores each item with its own type", error);
+	}
+	{
+		Allocator alloc;
+		std::vector<VmNamedDynamicVariable> fields;
+		std::string error;
+		ExpectRefused(ctx, "a Dynamic field refuses a value without its type",
+		    "Metadata field 'extra' is Dynamic and must be given as a MetadataDynamicValue",
+		    PushOne(MakeSchema("extra", VmType::Dynamic), MetadataValue::FromString("text"), alloc, fields, error), error);
+	}
+	{
+		Allocator alloc;
+		std::vector<VmNamedDynamicVariable> fields;
+		std::string error;
+		ExpectRefused(ctx, "a Dynamic field refuses a type that is no VM type", "Metadata field 'extra' names an unknown type '99'",
+		    PushOne(MakeSchema("extra", VmType::Dynamic), MetadataValue::FromDynamic((VmType)99, MetadataValue::FromInt64(1)), alloc, fields, error),
+		    error);
+	}
+	// A typed value names one type, so it cannot give the types of the fields of a struct. It takes no
+	// typed values inside a typed value either.
+	{
+		const std::pair<VmType, const char*> refused[] = {
+			{ VmType::Struct, "Struct" },
+			{ VmType::Array_Struct, "Array_Struct" },
+			{ VmType::Dynamic, "Dynamic" },
+			{ VmType::Array, "Array_Dynamic" },
+		};
+		for( const auto& type : refused )
+		{
+			Allocator alloc;
+			std::vector<VmNamedDynamicVariable> fields;
+			std::string error;
+			ExpectRefused(ctx, std::string("a Dynamic field refuses a value of type ") + type.second,
+			    std::string("Metadata field 'extra' cannot hold a Dynamic value of type ") + type.second,
+			    PushOne(MakeSchema("extra", VmType::Dynamic), MetadataValue::FromDynamic(type.first, MetadataValue::FromStruct({})), alloc, fields,
+			        error),
+			    error);
+		}
+	}
+	{
+		Allocator alloc;
+		std::vector<VmNamedDynamicVariable> fields;
+		std::string typeError, formError;
+		ExpectRefused(ctx, "each item of an Array_Dynamic field is checked against its own type", "Metadata field 'extras[0]' must be exactly 32 bytes",
+		    PushOne(MakeSchema("extras", VmType::Array),
+		        MetadataValue::FromArray({ MetadataValue::FromDynamic(VmType::Bytes32, MetadataValue::FromString("0011")) }), alloc, fields, typeError),
+		    typeError);
+		ExpectRefused(ctx, "an Array_Dynamic item without its type is refused",
+		    "Metadata field 'extras[0]' is Dynamic and must be given as a MetadataDynamicValue",
+		    PushOne(MakeSchema("extras", VmType::Array), MetadataValue::FromArray({ MetadataValue::FromInt64(1) }), alloc, fields, formError),
+		    formError);
+	}
+}
+
 } // namespace
 
 void RunMetadataValueTests(TestContext& ctx)
 {
 	RunDigitStringTests(ctx);
+	RunDynamicValueTests(ctx);
 }
 
 } // namespace testcases

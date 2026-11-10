@@ -5,12 +5,74 @@ using namespace testutil;
 
 // NFT data and series metadata are written by their schema: only the values, in schema order. Data
 // written by a schema is read back by the same schema, as the chain reads it. A Struct or Array_Struct
-// field inside is written by that field's own struct schema. The expected bytes are what the
-// TypeScript SDK writes for the same schema and values, and the C# SDK's tests compose the same
-// layouts.
+// field inside is written by that field's own struct schema, and a Dynamic value with its own type. The
+// expected bytes are what the TypeScript SDK writes for the same schema and values, and the C# SDK's
+// tests compose the same layouts.
 
 void RunVmSchemaTests(TestContext& ctx)
 {
+	// A Dynamic field is written as its value's type byte and then the value. An Array_Dynamic field is
+	// a count and then each item in the same way.
+	{
+		VmNamedVariableSchema fields[] = {
+			MakeSchema("extra", VmType::Dynamic),
+			MakeSchema("extras", VmType::Array),
+			MakeSchema("note", VmType::String),
+		};
+		const VmStructSchema schema{ 3, fields, VmStructSchema::Flag_None };
+		const std::vector<MetadataField> metadata = {
+			{ "extra", MetadataValue::FromDynamic(VmType::Int64, MetadataValue::FromString("9007199254740993")) },
+			{ "extras", MetadataValue::FromArray({ MetadataValue::FromDynamic(VmType::String, MetadataValue::FromString("a")),
+			                MetadataValue::FromDynamic(VmType::Int32, MetadataValue::FromInt64(7)) }) },
+			{ "note", MetadataValue::FromString("after the dynamic values") },
+		};
+		const std::string expected =
+		    "0C0100000000002000"
+		    "02000000"
+		    "166100"
+		    "0A07000000"
+		    "6166746572207468652064796E616D69632076616C75657300";
+		std::string hex, error;
+		const bool written = WriteBySchema(schema, metadata, hex, error);
+		Report(ctx, written && hex == expected, "Dynamic and Array_Dynamic fields are written with the type of each value", written ? hex : error);
+
+		// A Dynamic field reads back as a Dynamic around the value, which keeps its own type, so the data
+		// read writes back to the same bytes. The items of an Array_Dynamic field read back as themselves.
+		Allocator alloc;
+		const ByteArray bytes = HexToBytes(expected);
+		ReadView r((void*)bytes.data(), bytes.size());
+		VmDynamicStruct read{};
+		const bool decoded = Read(read, schema, r, alloc);
+		const VmDynamicVariable* extra = decoded ? read[SmallString("extra")] : nullptr;
+		const VmDynamicVariable* extras = decoded ? read[SmallString("extras")] : nullptr;
+		const VmDynamicVariable* note = decoded ? read[SmallString("note")] : nullptr;
+		const VmDynamicVariable* held = extra && extra->type == VmType::Dynamic ? extra->data.dynamic : nullptr;
+		const bool ok = held && held->type == VmType::Int64 && held->data.int64 == 9007199254740993ull && extras &&
+		                extras->arrayLength == 2 && extras->data.dynamicArray[0].type == VmType::String &&
+		                std::string(extras->data.dynamicArray[0].data.string) == "a" && extras->data.dynamicArray[1].type == VmType::Int32 &&
+		                extras->data.dynamicArray[1].data.int32 == 7 && note && std::string(note->data.string) == "after the dynamic values";
+		Report(ctx, ok, "Dynamic and Array_Dynamic fields read back by their schema");
+
+		ByteArray again;
+		WriteView w(again);
+		const bool rewritten = decoded && Write(read, schema, w);
+		Report(ctx, rewritten && ToUpper(BytesToHex(again)) == expected, "the data read back writes the same bytes", ToUpper(BytesToHex(again)));
+	}
+
+	// A value that names its own type can be Dynamic as well: the type byte of Dynamic, then the value it
+	// holds with that value's type byte.
+	{
+		const ByteArray bytes = HexToBytes("000C0500000000000000");
+		Allocator alloc;
+		ReadView r((void*)bytes.data(), bytes.size());
+		VmDynamicVariable read{};
+		const bool decoded = Read(read, r, alloc);
+		const VmDynamicVariable* held = decoded && read.type == VmType::Dynamic ? read.data.dynamic : nullptr;
+		Report(ctx, held && held->type == VmType::Int64 && held->data.int64 == 5, "a Dynamic value that names its type reads back wrapped");
+		Report(ctx, decoded && ToUpper(BytesToHex(CarbonSerialize(read))) == "000C0500000000000000",
+		    "a Dynamic value that names its type writes back unchanged");
+	}
+
 	// A Struct or Array_Struct field is written by its own struct schema, without field names or types,
 	// so it has to be read by that schema as well.
 	{

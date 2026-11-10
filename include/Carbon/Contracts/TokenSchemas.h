@@ -78,6 +78,19 @@ struct FieldType {
 	std::vector<FieldType> fields{};
 };
 
+struct MetadataValue;
+
+// The value of a Dynamic field, or of one item of an Array_Dynamic field. Such a field can hold a value
+// of any VM type, and the chain stores the type with the value, so the type is named here. The value
+// is given as for a field of that type. The type cannot be Dynamic, Array_Dynamic, Struct or
+// Array_Struct. MetadataValue::FromDynamic builds one.
+struct MetadataDynamicValue {
+	VmType type = VmType::Dynamic;
+	// A pointer, because a value cannot hold a value of its own type directly. It points at a const
+	// value, so the copies that share it cannot change it.
+	std::shared_ptr<const MetadataValue> value{};
+};
+
 struct MetadataValue {
 	enum class Kind
 	{
@@ -93,6 +106,7 @@ struct MetadataValue {
 		UInt256,
 		Struct,
 		Array,
+		Dynamic,
 	};
 
 	Kind kind = Kind::Null;
@@ -107,6 +121,7 @@ struct MetadataValue {
 	uint256 uint256Value{};
 	std::vector<MetadataValue> arrayValue{};
 	std::vector<std::pair<std::string, MetadataValue>> structValue{};
+	MetadataDynamicValue dynamicValue{};
 
 	static MetadataValue FromString(const std::string& value)
 	{
@@ -193,6 +208,16 @@ struct MetadataValue {
 		MetadataValue out;
 		out.kind = Kind::Array;
 		out.arrayValue = value;
+		return out;
+	}
+
+	// Returns the value of a Dynamic field: a value of type `type`, given as for a field of that type.
+	static MetadataValue FromDynamic(VmType type, const MetadataValue& value)
+	{
+		MetadataValue out;
+		out.kind = Kind::Dynamic;
+		out.dynamicValue.type = type;
+		out.dynamicValue.value = std::make_shared<const MetadataValue>(value);
 		return out;
 	}
 };
@@ -688,6 +713,43 @@ struct MetadataHelper {
 		}
 	}
 
+	// Normalizes the value of a Dynamic field, or of one item of an Array_Dynamic field, to the value it
+	// holds: a value of its own type, which the chain writes with that type and without a schema. A
+	// MetadataDynamicValue names one type, so it cannot give the types of the fields of a Struct or
+	// Array_Struct. It takes no Dynamic or Array_Dynamic value either, because no use is known for typed
+	// values nested in a typed value. So it holds a scalar or an array of scalars.
+	static bool NormalizeDynamicValue(
+	    const std::string& fieldName,
+	    const MetadataValue& value,
+	    Allocator& alloc,
+	    VmDynamicVariable& out,
+	    std::string& outError)
+	{
+		const auto refuse = [&outError](const std::string& why)
+		{
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata dynamic value invalid", why);
+			outError = why;
+			return false;
+		};
+		if( value.kind != MetadataValue::Kind::Dynamic || !value.dynamicValue.value )
+		{
+			return refuse("Metadata field '" + fieldName + "' is Dynamic and must be given as a MetadataDynamicValue");
+		}
+		const VmType type = value.dynamicValue.type;
+		const char* typeName = VmTypeName(type);
+		if( !typeName )
+		{
+			return refuse("Metadata field '" + fieldName + "' names an unknown type '" + std::to_string((int)type) + "'");
+		}
+		if( type == VmType::Dynamic || type == VmType::Array || type == VmType::Struct || type == VmType::Array_Struct )
+		{
+			return refuse("Metadata field '" + fieldName + "' cannot hold a Dynamic value of type " + typeName);
+		}
+		VmVariableSchema schema{};
+		schema.type = type;
+		return NormalizeMetadataValue(schema, fieldName, *value.dynamicValue.value, alloc, out, outError);
+	}
+
 	static bool NormalizeScalarValue(
 	    VmType type,
 	    const std::string& fieldName,
@@ -774,6 +836,19 @@ struct MetadataHelper {
 			if( !NormalizeStructValue(fieldName, structSchema, value, alloc, structure, outError) )
 				return false;
 			out = VmDynamicVariable(structure);
+			return true;
+		}
+		case VmType::Dynamic: {
+			// The field stores a Dynamic around the value it holds. Write writes a Dynamic field only from
+			// that form, and the chain reads such a field back into it.
+			VmDynamicVariable held;
+			if( !NormalizeDynamicValue(fieldName, value, alloc, held, outError) )
+				return false;
+			VmDynamicVariable* storage = alloc.Alloc<VmDynamicVariable>(1);
+			*storage = held;
+			out = VmDynamicVariable();
+			out.type = VmType::Dynamic;
+			out.data.dynamic = storage;
 			return true;
 		}
 		default:
@@ -922,6 +997,17 @@ struct MetadataHelper {
 					return false;
 			}
 			out.data.structureArray = { structSchema, arr };
+			return true;
+		}
+		case VmType::Dynamic: {
+			// The chain writes each item with its own type, so the array holds the values themselves.
+			VmDynamicVariable* arr = alloc.Alloc<VmDynamicVariable>(count);
+			for( uint32_t i = 0; i != count; ++i )
+			{
+				if( !NormalizeDynamicValue(element(i), values[i], alloc, arr[i], outError) )
+					return false;
+			}
+			out.data.dynamicArray = arr;
 			return true;
 		}
 		default:

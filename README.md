@@ -453,7 +453,19 @@
   |`Bytes`                         | `FromBytes`, or `FromString` with hex                                                    |
   |`Bytes16`, `Bytes32`, `Bytes64` | the same with exactly 16, 32 or 64 bytes, or `FromBytes16`, `FromBytes32`, `FromBytes64` |
   |`Struct`                        | `FromStruct` with a value for every field of the struct                                  |
+  |`Dynamic`                       | `FromDynamic(type, value)`: the type and the value                                       |
   |`Array_...`                     | `FromArray` with values of the item type                                                 |
+
+ The chain stores a value of any type in a `Dynamic` field, together with that
+  type. The SDK takes such a value as `MetadataValue::FromDynamic(type, value)`,
+  which holds a `MetadataDynamicValue`: the type, and the value given as for a
+  field of that type. The type cannot be `Dynamic`, `Array_Dynamic`, `Struct` or
+  `Array_Struct`. An `Array_Dynamic` field, `VmType::Array` in this SDK, takes
+  `FromArray` with such values. Read back by its schema, a `Dynamic` field is a
+  `VmDynamicVariable` of type `Dynamic` whose `data.dynamic` points at the stored
+  value, a `VmDynamicVariable` of that value's own type. Each item of an
+  `Array_Dynamic` field reads back as a `VmDynamicVariable` of its own type, with
+  no `Dynamic` around it.
 
 ------------------------------------------------------------------------------
  Changing token metadata
