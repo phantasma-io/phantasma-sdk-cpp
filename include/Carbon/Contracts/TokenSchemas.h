@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <string>
@@ -547,6 +548,146 @@ struct MetadataHelper {
 		return false;
 	}
 
+	// The range of an Int64 or Int256 metadata value: the signed range, or 0 to the unsigned maximum. A
+	// value above the signed maximum is stored as its two's complement. The bounds are decimal text,
+	// because the Int256 bounds fit no C++ integer type.
+	struct IntegerBounds {
+		const char* label;
+		const char* min;
+		const char* max;
+		const char* unsignedMax;
+	};
+	inline static const IntegerBounds Int64Bounds{ "Int64", "-9223372036854775808", "9223372036854775807", "18446744073709551615" };
+	inline static const IntegerBounds Int256Bounds{
+		"Int256",
+		"-57896044618658097711785492504343953926634992332820282019728792003956564819968",
+		"57896044618658097711785492504343953926634992332820282019728792003956564819967",
+		"115792089237316195423570985008687907853269984665640564039457584007913129639935",
+	};
+
+	// Refuses a value that is neither an integer nor a string of decimal digits.
+	static bool RefuseNonInteger(const std::string& fieldName, std::string& outError)
+	{
+		const std::string invalid = "Metadata field '" + fieldName + "' must be an integer or a string of decimal digits";
+		PHANTASMA_EXCEPTION_MESSAGE("Metadata integer invalid", invalid);
+		outError = invalid;
+		return false;
+	}
+
+	// Checks an Int64 or Int256 metadata value given as text. A JSON number above 2^53 - 1 loses digits
+	// in JavaScript, so such values are often written as strings. The text must be decimal digits with
+	// an optional leading minus, the whole string: no spaces, no plus sign, no hex, no line break. The
+	// value must lie within `bounds`, as a number must. On success `negative` and `digits` hold its sign
+	// and its digits without leading zeros.
+	static bool CheckDecimalInteger(
+	    const std::string& fieldName,
+	    const std::string& text,
+	    const IntegerBounds& bounds,
+	    bool& negative,
+	    std::string& digits,
+	    std::string& outError)
+	{
+		negative = !text.empty() && text[0] == '-';
+		size_t first = negative ? 1 : 0;
+		if( first == text.size() )
+		{
+			return RefuseNonInteger(fieldName, outError);
+		}
+		for( size_t i = first; i != text.size(); ++i )
+		{
+			if( text[i] < '0' || text[i] > '9' )
+			{
+				return RefuseNonInteger(fieldName, outError);
+			}
+		}
+		while( first + 1 < text.size() && text[first] == '0' )
+		{
+			++first;
+		}
+		digits = text.substr(first);
+
+		// Without leading zeros, the longer of two digit strings is the larger number, and two strings of
+		// the same length compare as numbers character by character.
+		const std::string limit = negative ? std::string(bounds.min).substr(1) : std::string(bounds.unsignedMax);
+		if( digits.size() > limit.size() || (digits.size() == limit.size() && digits > limit) )
+		{
+			const std::string outOfRange = "Metadata field '" + fieldName + "' must be between " + bounds.min + " and " +
+			                               bounds.max + " or between 0 and " + bounds.unsignedMax + " (" + bounds.label + ")";
+			PHANTASMA_EXCEPTION_MESSAGE("Metadata integer invalid", outOfRange);
+			outError = outOfRange;
+			return false;
+		}
+		return true;
+	}
+
+	// Reads an Int64 metadata value: an Int64 or UInt64 value, or a string of decimal digits. `out` is
+	// its two's complement.
+	static bool EnsureInt64(const std::string& fieldName, const MetadataValue& value, uint64_t& out, std::string& outError)
+	{
+		if( value.kind == MetadataValue::Kind::String )
+		{
+			bool negative = false;
+			std::string digits;
+			if( !CheckDecimalInteger(fieldName, value.stringValue, Int64Bounds, negative, digits, outError) )
+			{
+				return false;
+			}
+			// The bounds keep the digits within 64 bits, so strtoull reads them exactly.
+			const uint64_t magnitude = std::strtoull(digits.c_str(), nullptr, 10);
+			out = negative ? (uint64_t)0 - magnitude : magnitude;
+			return true;
+		}
+		if( value.kind != MetadataValue::Kind::Int64 && value.kind != MetadataValue::Kind::UInt64 )
+		{
+			return RefuseNonInteger(fieldName, outError);
+		}
+		return EnsureIntegerInRange(
+		    fieldName,
+		    value,
+		    std::numeric_limits<int64_t>::min(),
+		    std::numeric_limits<int64_t>::max(),
+		    std::numeric_limits<uint64_t>::max(),
+		    "Int64",
+		    out,
+		    outError);
+	}
+
+	// Reads an Int256 metadata value: a value of any of the four integer kinds, or a string of decimal
+	// digits. `out` is its two's complement.
+	static bool EnsureInt256(const std::string& fieldName, const MetadataValue& value, uint256& out, std::string& outError)
+	{
+		switch( value.kind )
+		{
+		case MetadataValue::Kind::Int64:
+			out = int256(value.int64Value).Unsigned();
+			return true;
+		case MetadataValue::Kind::UInt64:
+			out = uint256(value.uint64Value);
+			return true;
+		case MetadataValue::Kind::Int256:
+			out = value.int256Value.Unsigned();
+			return true;
+		case MetadataValue::Kind::UInt256:
+			out = value.uint256Value;
+			return true;
+		case MetadataValue::Kind::String: {
+			bool negative = false;
+			std::string digits;
+			if( !CheckDecimalInteger(fieldName, value.stringValue, Int256Bounds, negative, digits, outError) )
+			{
+				return false;
+			}
+			// The bounds keep the digits within 256 bits, which FromString reads exactly. With the minus
+			// sign it returns the two's complement.
+			const std::string number = negative ? "-" + digits : digits;
+			out = uint256::FromString(number.c_str(), (uint32_t)number.size(), 10);
+			return true;
+		}
+		default:
+			return RefuseNonInteger(fieldName, outError);
+		}
+	}
+
 	static bool NormalizeScalarValue(
 	    VmType type,
 	    const std::string& fieldName,
@@ -588,44 +729,17 @@ struct MetadataHelper {
 		}
 		case VmType::Int64: {
 			uint64_t raw = 0;
-			if( !EnsureIntegerInRange(
-			        fieldName,
-			        value,
-			        std::numeric_limits<int64_t>::min(),
-			        std::numeric_limits<int64_t>::max(),
-			        std::numeric_limits<uint64_t>::max(),
-			        "Int64",
-			        raw,
-			        outError) )
+			if( !EnsureInt64(fieldName, value, raw, outError) )
 				return false;
 			out = VmDynamicVariable((uint64_t)raw);
 			return true;
 		}
 		case VmType::Int256: {
-			if( value.kind == MetadataValue::Kind::Int256 )
-			{
-				out = VmDynamicVariable(value.int256Value);
-				return true;
-			}
-			if( value.kind == MetadataValue::Kind::UInt256 )
-			{
-				out = VmDynamicVariable(value.uint256Value);
-				return true;
-			}
-			if( value.kind == MetadataValue::Kind::Int64 )
-			{
-				out = VmDynamicVariable(int256(value.int64Value));
-				return true;
-			}
-			if( value.kind == MetadataValue::Kind::UInt64 )
-			{
-				out = VmDynamicVariable(uint256(value.uint64Value));
-				return true;
-			}
-			const std::string invalid = "Metadata field '" + fieldName + "' must be a number (Int256)";
-			PHANTASMA_EXCEPTION_MESSAGE("Metadata integer invalid", invalid);
-			outError = invalid;
-			return false;
+			uint256 raw{};
+			if( !EnsureInt256(fieldName, value, raw, outError) )
+				return false;
+			out = VmDynamicVariable(raw);
+			return true;
 		}
 		case VmType::Bytes: {
 			ByteArray bytes;
@@ -742,18 +856,8 @@ struct MetadataHelper {
 			uint64_t* arr = alloc.Alloc<uint64_t>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				uint64_t raw = 0;
-				if( !EnsureIntegerInRange(
-				        element(i),
-				        values[i],
-				        std::numeric_limits<int64_t>::min(),
-				        std::numeric_limits<int64_t>::max(),
-				        std::numeric_limits<uint64_t>::max(),
-				        "Int64",
-				        raw,
-				        outError) )
+				if( !EnsureInt64(element(i), values[i], arr[i], outError) )
 					return false;
-				arr[i] = raw;
 			}
 			out.data.int64Array = arr;
 			return true;
@@ -762,30 +866,8 @@ struct MetadataHelper {
 			uint256* arr = alloc.Alloc<uint256>(count);
 			for( uint32_t i = 0; i != count; ++i )
 			{
-				const MetadataValue& v = values[i];
-				if( v.kind == MetadataValue::Kind::UInt256 )
-				{
-					arr[i] = v.uint256Value;
-				}
-				else if( v.kind == MetadataValue::Kind::Int256 )
-				{
-					arr[i] = v.int256Value.Unsigned();
-				}
-				else if( v.kind == MetadataValue::Kind::Int64 )
-				{
-					arr[i] = int256(v.int64Value).Unsigned();
-				}
-				else if( v.kind == MetadataValue::Kind::UInt64 )
-				{
-					arr[i] = uint256(v.uint64Value);
-				}
-				else
-				{
-					const std::string invalid = "Metadata field '" + element(i) + "' must be a number (Int256)";
-					PHANTASMA_EXCEPTION_MESSAGE("Metadata integer invalid", invalid);
-					outError = invalid;
+				if( !EnsureInt256(element(i), values[i], arr[i], outError) )
 					return false;
-				}
 			}
 			out.data.int256Array = arr;
 			return true;

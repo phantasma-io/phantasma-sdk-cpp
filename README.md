@@ -448,7 +448,7 @@
   |--------------------------------|------------------------------------------------------------------------------------------|
   |`String`                        | `MetadataValue::FromString` with text that is not blank                                  |
   |`Int8`, `Int16`, `Int32`        | `FromInt64` or `FromUInt64`                                                              |
-  |`Int64`                         | the same                                                                                 |
+  |`Int64`                         | the same, or `FromString` with decimal digits such as `"-12"` or `"9007199254740993"`   |
   |`Int256`                        | the same as `Int64`, or `FromInt256` or `FromUInt256`                                    |
   |`Bytes`                         | `FromBytes`, or `FromString` with hex                                                    |
   |`Bytes16`, `Bytes32`, `Bytes64` | the same with exactly 16, 32 or 64 bytes, or `FromBytes16`, `FromBytes32`, `FromBytes64` |
