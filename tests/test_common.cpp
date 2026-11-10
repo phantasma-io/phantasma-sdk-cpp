@@ -221,6 +221,34 @@ VmDynamicVariable MetadataFieldRemoval()
 	return removal;
 }
 
+bool WriteBySchema(const VmStructSchema& schema, const std::vector<MetadataField>& metadata, std::string& hex, std::string& error)
+{
+	Allocator alloc;
+	std::vector<VmNamedDynamicVariable> fields;
+	for( uint32_t i = 0; i != schema.numFields; ++i )
+	{
+		if( !MetadataHelper::PushMetadataField(schema.fields[i], fields, metadata, alloc, error) )
+		{
+			return false;
+		}
+	}
+	ByteArray bytes;
+	WriteView w(bytes);
+	const bool written = Write(VmDynamicStruct::Sort((uint32_t)fields.size(), fields.data()), schema, w);
+	hex = ToUpper(BytesToHex(bytes));
+	return written;
+}
+
+std::string RomFieldSchemaHex(const TokenSchemasOwned& schemas, const char* name)
+{
+	const VmNamedVariableSchema* field = schemas.View().rom[SmallString(name)];
+	return field ? ToUpper(BytesToHex(CarbonSerialize(*field))) : std::string("no field ") + name;
+}
+
+const char* const kStatsSchemaHex = "0573746174730402000000056C6576656C0A05636C6173731600";
+const char* const kItemsSchemaHex = "056974656D7305010000000269640C00";
+const char* const kOuterSchemaHex = "056F7574657204010000000573746174730402000000056C6576656C0A05636C617373160000";
+
 Bytes32 ToBytes32(const ByteArray& bytes)
 {
 	Bytes32 out{};

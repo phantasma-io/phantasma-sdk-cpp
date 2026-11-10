@@ -174,6 +174,64 @@ inline VmType VmTypeFromString(const std::string& name, bool* outError = nullptr
 	return Fail(name.c_str());
 }
 
+// Returns the name of a VM type, or nullptr for a value that is no VM type. VmType::Array is the
+// array of Dynamic values, so it is named Array_Dynamic.
+inline const char* VmTypeName(VmType type)
+{
+	switch( type )
+	{
+	case VmType::Dynamic:
+		return "Dynamic";
+	case VmType::Array:
+		return "Array_Dynamic";
+	case VmType::Bytes:
+		return "Bytes";
+	case VmType::Struct:
+		return "Struct";
+	case VmType::Int8:
+		return "Int8";
+	case VmType::Int16:
+		return "Int16";
+	case VmType::Int32:
+		return "Int32";
+	case VmType::Int64:
+		return "Int64";
+	case VmType::Int256:
+		return "Int256";
+	case VmType::Bytes16:
+		return "Bytes16";
+	case VmType::Bytes32:
+		return "Bytes32";
+	case VmType::Bytes64:
+		return "Bytes64";
+	case VmType::String:
+		return "String";
+	case VmType::Array_Bytes:
+		return "Array_Bytes";
+	case VmType::Array_Struct:
+		return "Array_Struct";
+	case VmType::Array_Int8:
+		return "Array_Int8";
+	case VmType::Array_Int16:
+		return "Array_Int16";
+	case VmType::Array_Int32:
+		return "Array_Int32";
+	case VmType::Array_Int64:
+		return "Array_Int64";
+	case VmType::Array_Int256:
+		return "Array_Int256";
+	case VmType::Array_Bytes16:
+		return "Array_Bytes16";
+	case VmType::Array_Bytes32:
+		return "Array_Bytes32";
+	case VmType::Array_Bytes64:
+		return "Array_Bytes64";
+	case VmType::Array_String:
+		return "Array_String";
+	}
+	return nullptr;
+}
+
 inline VmType operator|(VmType a, VmType b)
 {
 	return (VmType)((uint8_t)a | (uint8_t)b);

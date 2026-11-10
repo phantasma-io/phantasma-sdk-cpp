@@ -400,6 +400,62 @@
   to outlive it too.
 
 ------------------------------------------------------------------------------
+ NFT token schemas and metadata values
+------------------------------------------------------------------------------
+ An NFT token is created with three schemas: `seriesMetadata` (the data a series
+  shares), `rom` (the data an NFT gets at its mint and keeps) and `ram` (the data
+  of an NFT that can change). The schemas of a token cannot change after it is
+  created. `TokenSchemasBuilder::BuildFromFields` builds them from three lists of
+  `FieldType`. `TokenSchemasBuilder::FromJson` builds them from JSON. It needs
+  `PHANTASMA_RAPIDJSON`, which the RapidJSON adaptor defines (see Adaptors).
+
+ A field is `{ "name": ..., "type": ... }`, and the type is a name of `VmType`,
+  such as `String`, `Int32`, `Bytes32` or `Array_Int64`. A `Struct` or
+  `Array_Struct` field also lists the fields of its struct, in the same form. A
+  `FieldType` holds them in `fields`:
+
+     {
+       "seriesMetadata": [],
+       "rom": [
+         { "name": "name", "type": "String" },
+         { "name": "description", "type": "String" },
+         { "name": "imageURL", "type": "String" },
+         { "name": "infoURL", "type": "String" },
+         { "name": "royalties", "type": "Int32" },
+         {
+           "name": "stats",
+           "type": "Struct",
+           "fields": [
+             { "name": "level", "type": "Int32" },
+             { "name": "class", "type": "String" }
+           ]
+         }
+       ],
+       "ram": []
+     }
+
+ The SDK adds its own fields: `_i` and `rom` to the `rom` schema, and `_i`,
+  `mode` and `rom` to the `seriesMetadata` schema. The fields `name`,
+  `description`, `imageURL`, `infoURL` and `royalties` must be in `rom` or in
+  `seriesMetadata`. This SDK sorts the fields of the three schemas by name. The
+  fields of a struct keep the order they are given in.
+
+ The builders of NFT data and series metadata (`PhantasmaNftRomBuilder`,
+  `NftRomBuilder`, `TokenSeriesMetadataBuilder`, `MetadataHelper::PushMetadataField`)
+  take each value as a `MetadataValue` and check it against the field's type:
+
+  |Type                            | Value                                                                                    |
+  |--------------------------------|------------------------------------------------------------------------------------------|
+  |`String`                        | `MetadataValue::FromString` with text that is not blank                                  |
+  |`Int8`, `Int16`, `Int32`        | `FromInt64` or `FromUInt64`                                                              |
+  |`Int64`                         | the same                                                                                 |
+  |`Int256`                        | the same as `Int64`, or `FromInt256` or `FromUInt256`                                    |
+  |`Bytes`                         | `FromBytes`, or `FromString` with hex                                                    |
+  |`Bytes16`, `Bytes32`, `Bytes64` | the same with exactly 16, 32 or 64 bytes, or `FromBytes16`, `FromBytes32`, `FromBytes64` |
+  |`Struct`                        | `FromStruct` with a value for every field of the struct                                  |
+  |`Array_...`                     | `FromArray` with values of the item type                                                 |
+
+------------------------------------------------------------------------------
  Changing token metadata
 ------------------------------------------------------------------------------
  `UpdateTokenMetadataTxHelper` builds `Token.UpdateTokenMetadata`, signed by the

@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -33,6 +34,10 @@ struct TokenSchemasOwned {
 	std::vector<VmNamedVariableSchema> seriesFields;
 	std::vector<VmNamedVariableSchema> romFields;
 	std::vector<VmNamedVariableSchema> ramFields;
+	// The field lists of the struct schemas inside Struct and Array_Struct fields, at every depth. The
+	// schemas in the three vectors above point into them, and a copy of this object keeps those
+	// pointers. So the lists are shared between copies, and nothing changes them once they are built.
+	std::vector<std::shared_ptr<const std::vector<VmNamedVariableSchema>>> nestedFields{};
 
 	TokenSchemasOwned() = default;
 
@@ -67,6 +72,9 @@ struct TokenSchemasOwned {
 struct FieldType {
 	std::string name;
 	VmType type = VmType::Dynamic;
+	// The fields of a Struct field, or of each struct of an Array_Struct field. Other types have none,
+	// and TokenSchemasBuilder::BuildFromFields reads them for those two types only.
+	std::vector<FieldType> fields{};
 };
 
 struct MetadataValue {
@@ -1048,7 +1056,10 @@ struct TokenSchemasBuilder {
 		return true;
 	}
 
-	static bool AddField(std::vector<VmNamedVariableSchema>& dest, const FieldType& f, std::string& outError)
+	// Adds the schema of `f` to `dest`. A Struct or Array_Struct field gets the schema of its struct,
+	// built from f.fields with the same checks, in the given order and with no flags, as the other SDKs
+	// build it. The field list of that schema is kept in `owner`.
+	static bool AddField(std::vector<VmNamedVariableSchema>& dest, const FieldType& f, TokenSchemasOwned& owner, std::string& outError)
 	{
 		if( f.name.empty() )
 		{
@@ -1069,9 +1080,23 @@ struct TokenSchemasBuilder {
 				return false;
 			}
 		}
+		VmVariableSchema schema{ f.type };
+		if( (f.type == VmType::Struct || f.type == VmType::Array_Struct) && !f.fields.empty() )
+		{
+			const auto structFields = std::make_shared<std::vector<VmNamedVariableSchema>>();
+			for( const auto& child : f.fields )
+			{
+				if( !AddField(*structFields, child, owner, outError) )
+				{
+					return false;
+				}
+			}
+			schema.structure = VmStructSchema{ (uint32_t)structFields->size(), structFields->data(), VmStructSchema::Flag_None };
+			owner.nestedFields.push_back(structFields);
+		}
 		dest.push_back(VmNamedVariableSchema{
 		    SmallString(f.name.c_str(), (phantasma::carbon::size_t)f.name.size()),
-		    VmVariableSchema{ f.type } });
+		    schema });
 		return true;
 	}
 
@@ -1131,8 +1156,9 @@ struct TokenSchemasBuilder {
 		return owned;
 	}
 
-	// Answers false without touching `out` when a field name is empty, duplicated, differs only in
-	// case, or when the finished schema fails Verify.
+	// Answers false without touching `out` when a field name is empty, duplicated or differs only in
+	// case, in a list or among the fields of a struct, or when the finished schema fails Verify. The
+	// three lists are sorted by name. The fields of a struct keep their given order.
 	static bool BuildFromFields(
 	    const std::vector<FieldType>& seriesFields,
 	    const std::vector<FieldType>& romFields,
@@ -1141,11 +1167,11 @@ struct TokenSchemasBuilder {
 	    std::string& outError)
 	{
 		TokenSchemasOwned owned;
-		const auto add = [&outError](std::vector<VmNamedVariableSchema>& dest, const std::vector<FieldType>& fields)
+		const auto add = [&owned, &outError](std::vector<VmNamedVariableSchema>& dest, const std::vector<FieldType>& fields)
 		{
 			for( const auto& f : fields )
 			{
-				if( !AddField(dest, f, outError) )
+				if( !AddField(dest, f, owned, outError) )
 				{
 					PHANTASMA_EXCEPTION_MESSAGE("Invalid token schema", outError);
 					return false;
@@ -1227,8 +1253,13 @@ struct TokenSchemasBuilder {
 	}
 
 #ifdef PHANTASMA_RAPIDJSON
+	// Reads token schemas from JSON: three arrays of fields, `seriesMetadata`, `rom` and `ram`. A field
+	// is { "name": ..., "type": ... }, and a Struct or Array_Struct field also has "fields", the fields
+	// of its struct in the same form.
+	//
 	// Answers false without touching `out` when the document is not an object, an array is missing or
-	// malformed, a type name is unknown, or the schema the fields build fails BuildFromFields.
+	// malformed, a type name is unknown, a field lacks the fields its type needs or has fields its type
+	// cannot have, or the schema the fields build fails BuildFromFields.
 	static bool FromJson(const std::string& json, TokenSchemasOwned& out, std::string& outError)
 	{
 		rapidjson::Document doc;
@@ -1250,22 +1281,12 @@ struct TokenSchemasBuilder {
 			}
 			for( auto it = doc[key].Begin(); it != doc[key].End(); ++it )
 			{
-				const rapidjson::Value& v = *it;
-				if( !v.IsObject() || !v.HasMember("name") || !v.HasMember("type") || !v["name"].IsString() || !v["type"].IsString() )
+				FieldType field;
+				if( !ParseFieldType(*it, key, field, outError) )
 				{
-					outError = std::string(key) + " entries must contain name and type";
-					PHANTASMA_EXCEPTION_MESSAGE("TokenSchemas json invalid", outError);
 					return false;
 				}
-				bool unknownType = false;
-				const VmType vmType = VmTypeFromString(v["type"].GetString(), &unknownType);
-				if( unknownType )
-				{
-					outError = "Unknown VmType: " + std::string(v["type"].GetString());
-					PHANTASMA_EXCEPTION_MESSAGE("TokenSchemas json invalid", outError);
-					return false;
-				}
-				fields.push_back(FieldType{ v["name"].GetString(), vmType });
+				fields.push_back(field);
 			}
 			return true;
 		};
@@ -1276,6 +1297,71 @@ struct TokenSchemasBuilder {
 			return false;
 		}
 		return BuildFromFields(seriesFields, romFields, ramFields, out, outError);
+	}
+
+  private:
+	// Reads one field of a token schema. `path` names the list the field stands in, for the error
+	// messages: the key of the list, then the name of each struct field it is inside, as in rom.stats.
+	static bool ParseFieldType(const rapidjson::Value& v, const std::string& path, FieldType& out, std::string& outError)
+	{
+		const auto refuse = [&outError](const std::string& why)
+		{
+			outError = why;
+			PHANTASMA_EXCEPTION_MESSAGE("TokenSchemas json invalid", outError);
+			return false;
+		};
+		if( !v.IsObject() )
+		{
+			return refuse(path + " field must be an object");
+		}
+		if( !v.HasMember("name") || !v["name"].IsString() )
+		{
+			return refuse(path + " field name must be string");
+		}
+		if( !v.HasMember("type") || !v["type"].IsString() )
+		{
+			return refuse(path + " field type must be string");
+		}
+		bool unknownType = false;
+		const VmType type = VmTypeFromString(v["type"].GetString(), &unknownType);
+		if( unknownType )
+		{
+			return refuse("Unknown VmType: " + std::string(v["type"].GetString()));
+		}
+		out.name = v["name"].GetString();
+		out.type = type;
+		const std::string fieldPath = path + "." + out.name;
+		const std::string typeName = VmTypeName(type);
+
+		// The chain keeps the schema of a struct inside the schema of a Struct or Array_Struct field, and
+		// writes the field's values by it. So such a field cannot be built without its fields.
+		if( type != VmType::Struct && type != VmType::Array_Struct )
+		{
+			if( v.HasMember("fields") )
+			{
+				return refuse(fieldPath + " has the type " + typeName + " and cannot have fields");
+			}
+			return true;
+		}
+		if( !v.HasMember("fields") || !v["fields"].IsArray() )
+		{
+			return refuse(fieldPath + " has the type " + typeName + " and needs a fields array");
+		}
+		const rapidjson::Value& children = v["fields"];
+		if( children.Size() == 0 )
+		{
+			return refuse(fieldPath + " has the type " + typeName + " and needs at least one field");
+		}
+		for( auto it = children.Begin(); it != children.End(); ++it )
+		{
+			FieldType child;
+			if( !ParseFieldType(*it, fieldPath, child, outError) )
+			{
+				return false;
+			}
+			out.fields.push_back(child);
+		}
+		return true;
 	}
 #endif
 };

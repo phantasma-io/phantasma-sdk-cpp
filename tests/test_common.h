@@ -139,6 +139,18 @@ std::vector<std::pair<std::string, std::string>> TokenCreationFields();
 // An empty Array_Dynamic, the only value the chain reads as the removal of a metadata field. This SDK
 // names that type VmType::Array.
 VmDynamicVariable MetadataFieldRemoval();
+// Writes `metadata` by `schema` as NFT data is written: only the values, in schema order. Answers false
+// when a value is refused, and `error` says why. `hex` is the bytes in upper-case hex.
+bool WriteBySchema(const VmStructSchema& schema, const std::vector<MetadataField>& metadata, std::string& hex, std::string& error);
+// Returns the schema of the ROM field `name` as the token's schemas carry it: the name, the type byte,
+// and for a struct field the struct's field count, fields and flags.
+std::string RomFieldSchemaHex(const TokenSchemasOwned& schemas, const char* name);
+// The schemas of three struct fields as the TypeScript SDK builds them from schemas JSON. `stats` is a
+// Struct of level (Int32) and class (String), `items` an Array_Struct of id (Int64), and `outer` a
+// Struct that holds stats.
+extern const char* const kStatsSchemaHex;
+extern const char* const kItemsSchemaHex;
+extern const char* const kOuterSchemaHex;
 Bytes32 ToBytes32(const ByteArray& bytes);
 VmNamedVariableSchema MakeSchema(const char* name, VmType type, const VmStructSchema* structSchema = nullptr);
 VmStructSchema MakeStructSchema(VmNamedVariableSchema* fields, uint32_t count, bool allowDynamicExtras = false);

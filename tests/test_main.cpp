@@ -7,6 +7,8 @@ int main()
 	testcases::RunCarbonTxBuilderVectorTests(ctx);
 	testcases::RunApiJsonNumericFlexTests(ctx);
 	testcases::RunMetadataHelperTests(ctx);
+	testcases::RunVmSchemaTests(ctx);
+	testcases::RunTokenSchemasNestedTests(ctx);
 	testcases::RunTokenMetadataIconTests(ctx);
 	testcases::RunTokenBuilderValidationTests(ctx);
 	testcases::RunTokenSchemasWireTests(ctx);
